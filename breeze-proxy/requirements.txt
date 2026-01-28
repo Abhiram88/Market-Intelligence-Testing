@@ -1,6 +1,6 @@
 
-flask
-flask-cors
-breeze_connect
-google-cloud-secret-manager
-requests
+flask>=3.0.0
+flask-cors>=4.0.0
+breeze-connect>=1.0.0
+google-cloud-secret-manager>=2.0.0
+requests>=2.31.0
