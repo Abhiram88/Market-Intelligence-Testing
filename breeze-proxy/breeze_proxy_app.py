@@ -72,7 +72,13 @@ def ensure_breeze_session():
 
 @app.route("/breeze/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
+    """Health check endpoint with detailed status"""
+    return jsonify({
+        "status": "ok", 
+        "session_active": bool(DAILY_SESSION_TOKEN),
+        "breeze_client_initialized": breeze_client is not None,
+        "session_key_set": bool(breeze_client and breeze_client.session_key) if breeze_client else False
+    })
 
 @app.route("/breeze/admin/api-session", methods=["POST"])
 def set_session():
@@ -98,22 +104,39 @@ def set_session():
 
 @app.route("/breeze/quotes", methods=["POST"])
 def get_quotes():
+    """Fetch quotes from Breeze API with improved error handling"""
     client, err_resp = ensure_breeze_session()
     if err_resp: return err_resp
 
     data = request.get_json() or {}
     stock_code = data.get("stock_code")
-    if not stock_code: return jsonify({"error": "stock_code required"}), 400
+    if not stock_code: 
+        return jsonify({"error": "stock_code required"}), 400
+
+    exchange_code = data.get("exchange_code", "NSE")
+    product_type = data.get("product_type", "cash")
+    
+    logger.info(f"Fetching quote for {stock_code} on {exchange_code}")
 
     try:
         raw_data = client.get_quotes(
             stock_code=stock_code, 
-            exchange_code=data.get("exchange_code", "NSE"), 
-            product_type="cash"
+            exchange_code=exchange_code, 
+            product_type=product_type
         )
         
+        logger.info(f"Raw data from Breeze: {raw_data}")
+        
         if raw_data and raw_data.get("Success"):
-            row = raw_data["Success"][0]
+            # Handle both dict and list responses
+            success_data = raw_data["Success"]
+            if isinstance(success_data, list):
+                if len(success_data) == 0:
+                    return jsonify({"error": f"No data for {stock_code}"}), 404
+                row = success_data[0]
+            else:
+                row = success_data
+            
             formatted = {
                 "last_traded_price": float(row.get("ltp", 0)),
                 "change": float(row.get("change", 0)),
@@ -126,11 +149,18 @@ def get_quotes():
                 "best_bid_price": float(row.get("best_bid_price", 0)),
                 "best_bid_quantity": float(row.get("best_bid_quantity", 0)),
                 "best_offer_price": float(row.get("best_offer_price", 0)),
-                "best_offer_quantity": float(row.get("best_offer_quantity", 0))
+                "best_offer_quantity": float(row.get("best_offer_quantity", 0)),
+                "stock_code": stock_code
             }
+            logger.info(f"Quote fetched successfully for {stock_code}")
             return jsonify({"Success": formatted}), 200
-        return jsonify({"error": "No data returned from Breeze"}), 404
+        else:
+            error_msg = raw_data.get("Error", "No data returned from Breeze")
+            logger.error(f"Breeze API error for {stock_code}: {error_msg}")
+            return jsonify({"error": error_msg}), 404
+            
     except Exception as e:
+        logger.error(f"Exception fetching quote for {stock_code}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route("/breeze/depth", methods=["POST"])

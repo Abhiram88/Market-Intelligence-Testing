@@ -33,6 +33,9 @@ def fetch_secret(name):
     if val: return val
     return ""
 
+# Gemini API Key for AI-powered analysis (must be after fetch_secret definition)
+GEMINI_API_KEY = fetch_secret("GEMINI_API_KEY") or os.environ.get("API_KEY") or os.environ.get("GEMINI_API_KEY")
+
 # --- Supabase & Mapping Logic ---
 def get_supabase() -> Client:
     if "supabase" not in _cache:
@@ -81,13 +84,32 @@ def extract_json(text):
 
 # --- Proxy Communication Helper ---
 def call_proxy(endpoint, payload, method="POST", headers=None):
+    """Call the Breeze proxy service with improved error handling"""
     url = f"{BREEZE_PROXY_URL}/{endpoint.lstrip('/')}"
+    
+    # Merge with default headers
+    req_headers = {"Content-Type": "application/json"}
+    if headers:
+        req_headers.update(headers)
+    
     try:
         if method == "POST":
-            r = requests.post(url, json=payload, headers=headers, timeout=30)
+            r = requests.post(url, json=payload, headers=req_headers, timeout=30)
         else:
-            r = requests.get(url, headers=headers, timeout=30)
-        return r.json(), r.status_code
+            r = requests.get(url, headers=req_headers, timeout=30)
+        
+        # Try to parse JSON response
+        try:
+            response_data = r.json()
+        except json.JSONDecodeError:
+            return {"ok": False, "error": f"Invalid JSON response from proxy: {r.text[:200]}"}, r.status_code
+        
+        return response_data, r.status_code
+        
+    except requests.exceptions.Timeout:
+        return {"ok": False, "error": "Proxy request timed out after 30 seconds"}, 504
+    except requests.exceptions.ConnectionError as e:
+        return {"ok": False, "error": f"Cannot connect to proxy service: {str(e)}"}, 502
     except Exception as e:
         return {"ok": False, "error": f"Proxy Communication Failed: {str(e)}"}, 502
 
@@ -97,6 +119,63 @@ def call_proxy(endpoint, payload, method="POST", headers=None):
 def health():
     return jsonify({"status": "ok", "service": "maia-backend-intelligence"})
 
+@app.route("/api/test/fetch-symbols", methods=["GET"])
+def test_fetch_symbols():
+    """Test endpoint to fetch LTP for NIFTY 50 and MEDICO"""
+    results = {}
+    errors = []
+    
+    # Test symbols as per requirements
+    test_symbols = ["NIFTY", "MEDICO"]
+    
+    for symbol in test_symbols:
+        try:
+            # Get Breeze short name
+            breeze_code = get_breeze_short_name(symbol)
+            results[f"{symbol}_mapped_to"] = breeze_code
+            
+            # Try to fetch quote
+            payload = {
+                "stock_code": breeze_code,
+                "exchange_code": "NSE",
+                "product_type": "cash"
+            }
+            
+            response, status_code = call_proxy("breeze/quotes", payload)
+            
+            if status_code == 200 and response.get("Success"):
+                data = response["Success"]
+                results[symbol] = {
+                    "status": "success",
+                    "ltp": data.get("last_traded_price"),
+                    "change": data.get("change"),
+                    "percent_change": data.get("percent_change"),
+                    "breeze_code": breeze_code
+                }
+            else:
+                error_msg = response.get("error", "Unknown error")
+                results[symbol] = {
+                    "status": "failed",
+                    "error": error_msg,
+                    "breeze_code": breeze_code,
+                    "status_code": status_code
+                }
+                errors.append(f"{symbol}: {error_msg}")
+        except Exception as e:
+            results[symbol] = {
+                "status": "error",
+                "error": str(e)
+            }
+            errors.append(f"{symbol}: {str(e)}")
+    
+    return jsonify({
+        "test": "fetch_nifty_and_medico",
+        "proxy_url": BREEZE_PROXY_URL,
+        "results": results,
+        "errors": errors if errors else None,
+        "success": len(errors) == 0
+    }), 200 if len(errors) == 0 else 500
+
 @app.route("/api/breeze/admin/api-session", methods=["POST"])
 def admin_handshake():
     payload = request.get_json() or {}
@@ -105,14 +184,31 @@ def admin_handshake():
 
 @app.route("/api/market/quote", methods=["POST"])
 def get_market_quote():
+    """Fetch market quote for a symbol with improved error handling"""
     data = request.get_json() or {}
     symbol = data.get("symbol", data.get("stock_code", ""))
+    
+    if not symbol:
+        return jsonify({"ok": False, "error": "Symbol is required"}), 400
+    
+    breeze_code = get_breeze_short_name(symbol)
     payload = {
-        "stock_code": get_breeze_short_name(symbol),
+        "stock_code": breeze_code,
         "exchange_code": data.get("exchange_code", "NSE"),
         "product_type": data.get("product_type", "cash")
     }
-    return call_proxy("breeze/quotes", payload)
+    
+    response, status_code = call_proxy("breeze/quotes", payload)
+    
+    # Add symbol mapping info to response for debugging
+    if isinstance(response, dict):
+        response["_debug"] = {
+            "original_symbol": symbol,
+            "breeze_code": breeze_code,
+            "proxy_url": BREEZE_PROXY_URL
+        }
+    
+    return jsonify(response), status_code
 
 @app.route("/api/market/depth", methods=["POST"])
 def get_market_depth():
