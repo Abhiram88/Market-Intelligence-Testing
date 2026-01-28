@@ -130,12 +130,18 @@ def get_quotes():
         if raw_data and raw_data.get("Success"):
             # Handle both dict and list responses
             success_data = raw_data["Success"]
-            if isinstance(success_data, list):
+            
+            if isinstance(success_data, dict):
+                # Direct dict response
+                row = success_data
+            elif isinstance(success_data, list):
                 if len(success_data) == 0:
+                    logger.error(f"Empty data list for {stock_code}")
                     return jsonify({"error": f"No data for {stock_code}"}), 404
                 row = success_data[0]
             else:
-                row = success_data
+                logger.error(f"Unexpected data type for {stock_code}: {type(success_data)}")
+                return jsonify({"error": f"Invalid data format for {stock_code}"}), 500
             
             formatted = {
                 "last_traded_price": float(row.get("ltp", 0)),
@@ -155,7 +161,11 @@ def get_quotes():
             logger.info(f"Quote fetched successfully for {stock_code}")
             return jsonify({"Success": formatted}), 200
         else:
-            error_msg = raw_data.get("Error", "No data returned from Breeze")
+            # Handle error responses
+            if isinstance(raw_data, dict):
+                error_msg = raw_data.get("Error", raw_data.get("error", "No data returned from Breeze"))
+            else:
+                error_msg = "Unexpected response format from Breeze"
             logger.error(f"Breeze API error for {stock_code}: {error_msg}")
             return jsonify({"error": error_msg}), 404
             

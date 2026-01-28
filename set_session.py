@@ -22,8 +22,8 @@ def set_session_token(backend_url: str, admin_key: str, session_token: str):
     payload = {"api_session": session_token}
     
     print(f"\nEndpoint: {url}")
-    print(f"Admin Key: {admin_key[:10]}..." if len(admin_key) > 10 else admin_key)
-    print(f"Session Token: {session_token[:20]}..." if len(session_token) > 20 else session_token)
+    print(f"Admin Key: ***{admin_key[-4:]}" if len(admin_key) > 4 else "Admin Key: ****")
+    print(f"Session Token: ***{session_token[-8:]}" if len(session_token) > 8 else "Session Token: ****")
     
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=30)
@@ -40,7 +40,7 @@ def set_session_token(backend_url: str, admin_key: str, session_token: str):
             try:
                 error_data = response.json()
                 print(f"Error: {json.dumps(error_data, indent=2)}")
-            except:
+            except (json.JSONDecodeError, ValueError):
                 print(f"Error: {response.text}")
             print("\n❌ Failed to set session token")
             return False
@@ -58,9 +58,9 @@ def set_session_token(backend_url: str, admin_key: str, session_token: str):
 def get_session_instructions():
     """Print instructions for obtaining session token"""
     print("""
-="*60
+{"="*60}
 How to Obtain ICICI Direct Session Token
-="*60
+{"="*60}
 
 1. Login to ICICI Direct Website:
    URL: https://secure.icicidirect.com/
@@ -81,7 +81,7 @@ IMPORTANT NOTES:
 - Keep the token secure - don't share it publicly
 - Token is tied to your ICICI Direct account
 
-="*60
+{"="*60}
 """)
 
 def main():

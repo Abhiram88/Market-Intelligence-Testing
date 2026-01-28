@@ -101,8 +101,10 @@ def call_proxy(endpoint, payload, method="POST", headers=None):
         # Try to parse JSON response
         try:
             response_data = r.json()
-        except json.JSONDecodeError:
-            return {"ok": False, "error": f"Invalid JSON response from proxy: {r.text[:200]}"}, r.status_code
+        except json.JSONDecodeError as e:
+            return {"ok": False, "error": f"Invalid JSON response from proxy (error: {str(e)})"}, r.status_code
+        except ValueError as e:
+            return {"ok": False, "error": f"Cannot parse proxy response: {str(e)}"}, r.status_code
         
         return response_data, r.status_code
         
@@ -173,8 +175,9 @@ def test_fetch_symbols():
         "proxy_url": BREEZE_PROXY_URL,
         "results": results,
         "errors": errors if errors else None,
-        "success": len(errors) == 0
-    }), 200 if len(errors) == 0 else 500
+        "success": len(errors) == 0,
+        "note": "This is a test endpoint. Use /api/market/quote for production."
+    }), 200  # Always return 200 for test endpoint, check 'success' field
 
 @app.route("/api/breeze/admin/api-session", methods=["POST"])
 def admin_handshake():
@@ -201,7 +204,7 @@ def get_market_quote():
     response, status_code = call_proxy("breeze/quotes", payload)
     
     # Add symbol mapping info to response for debugging
-    if isinstance(response, dict):
+    if isinstance(response, dict) and status_code == 200:
         response["_debug"] = {
             "original_symbol": symbol,
             "breeze_code": breeze_code,
