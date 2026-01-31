@@ -10,7 +10,7 @@ export const MOCK_MARKET_LOG: MarketLog = {
   day_low: 22350.00,
   volume: 12500000,
   source: 'ICICI Breeze',
-  is_live: true,
+  is_live: false, // Mock data is not live
 };
 
 export const PRIORITY_STOCKS = [
