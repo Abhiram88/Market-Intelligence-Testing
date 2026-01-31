@@ -12,7 +12,7 @@ from supabase import create_client, Client
 from google.cloud import secretmanager
 
 app = Flask(__name__)
-# Enable CORS so your React Frontend can talk to this server
+# Enable CORS for frontend connectivity
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # --- 1. CONFIGURATION & ENVIRONMENT ---
@@ -20,7 +20,7 @@ GCP_PROJECT_ID = "gen-lang-client-0751458856"
 BREEZE_PROXY_URL = os.environ.get("BREEZE_PROXY_URL", "https://maia-breeze-proxy-service-919207294606.us-central1.run.app").rstrip("/")
 _cache = {}
 
-# --- 2. HELPER FUNCTIONS (Must be defined before usage) ---
+# --- 2. HELPER FUNCTIONS ---
 
 def fetch_secret(name):
     """Retrieve secrets from environment or Google Secret Manager."""
@@ -36,22 +36,33 @@ def fetch_secret(name):
         return ""
 
 def get_supabase() -> Client:
+    """Singleton-style Supabase client with corrected secret names."""
     if "supabase" not in _cache:
-        url = os.environ.get("SUPABASE_URL", "https://xbnzvmgawikqzxutmoea.supabase.co")
-        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "sb_publishable_8TYnAzAX4s-CHAPVOpmLEA_Puqwcuwo")
+        # 1. Use the URL from Secret Manager (since it's there) or Env
+        url = fetch_secret("SUPABASE_URL") or os.environ.get("SUPABASE_URL")
+        
+        # 2. MATCH THE IMAGE: Use 'SUPABASE_ANON_KEY' instead of service role
+        key = fetch_secret("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+        
+        if not url or not key:
+            raise ValueError(f"CRITICAL: Missing Supabase credentials. URL: {bool(url)}, Key: {bool(key)}")
+            
         _cache["supabase"] = create_client(url, key)
     return _cache["supabase"]
-
+    
 def get_ist_now():
+    """Helper for Indian Standard Time."""
     return datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
 
 def is_market_open():
+    """Check if Indian markets (NSE/BSE) are currently trading."""
     now = get_ist_now()
     if now.weekday() >= 5: return False
     time_val = now.hour * 100 + now.minute
     return 900 <= time_val <= 1530
 
 def extract_json(text):
+    """Cleanly extract JSON from AI response blocks."""
     try:
         first = text.find('{')
         last = text.rfind('}')
@@ -60,9 +71,10 @@ def extract_json(text):
         return json.loads(text)
     except Exception as e:
         print(f"JSON Extraction Error: {e}")
-        return None
+        return {"error": "Failed to parse AI response", "raw_text": text}
 
 def call_proxy(endpoint, payload, method="POST", headers=None):
+    """Internal communication with the Breeze Proxy service."""
     url = f"{BREEZE_PROXY_URL}/{endpoint.lstrip('/')}"
     try:
         if method == "POST":
@@ -74,6 +86,7 @@ def call_proxy(endpoint, payload, method="POST", headers=None):
         return {"error": f"Proxy Communication Failed: {str(e)}"}, 502
 
 def get_breeze_short_name(symbol: str) -> str:
+    """Map NSE symbols to Breeze-specific codes via Supabase."""
     sym = symbol.strip().upper()
     if f"map_{sym}" in _cache: return _cache[f"map_{sym}"]
     sb = get_supabase()
@@ -87,15 +100,19 @@ def get_breeze_short_name(symbol: str) -> str:
         print(f"Supabase mapping failed for {sym}: {e}")
     return sym
 
-# --- 3. INITIALIZE GLOBAL VARIABLES ---
-# This must happen AFTER fetch_secret is defined
+# --- 3. INITIALIZE GLOBAL GEMINI 3 CLIENT ---
 GEMINI_API_KEY = fetch_secret("GEMINI_API_KEY")
+ai_client = genai.Client(api_key=GEMINI_API_KEY, vertexai=False)
 
 # --- 4. API ROUTES ---
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "maia-backend-intelligence", "gemini_ready": bool(GEMINI_API_KEY)})
+    return jsonify({
+        "status": "ok", 
+        "service": "maia-backend-intelligence", 
+        "gemini_ready": bool(GEMINI_API_KEY)
+    })
 
 @app.route("/api/market/quote", methods=["POST"])
 def get_market_quote():
@@ -129,13 +146,9 @@ def get_nifty_realtime():
         }), 200
     return jsonify({"error": "No data available"}), 404
 
-# RESTORED: Nifty Macro Analysis
-# RESTORED: Nifty Macro Analysis
 @app.route("/api/gemini/analyze_market_log", methods=["POST"])
 def analyze_market():
-    # Explicitly disabling Vertex tells the SDK: "Only use my API Key."
-    ai_client = genai.Client(api_key=GEMINI_API_KEY, vertexai=False)
-    log = request.json
+    log = request.json or {}
     log_date = log.get('log_date', str(get_ist_now().date()))
     
     sys_instr = """You are a Senior Quantitative Market Strategist. 
@@ -143,76 +156,73 @@ def analyze_market():
     Identify macro events that caused Nifty 50 movement. Provide specific, data-backed causal links."""
     
     prompt = f"""Analyze Nifty 50 movement for {log_date}.
-TELEMETRY: Close: {log.get('niftyClose')}, Change: {log.get('niftyChangePercent')}%
-OBJECTIVES:
-1. Identify 3-5 high-impact financial news stories for this date using Google Search.
-2. Explain how these influenced institutional pressure.
-3. Categorize the move and identify affected sectors.
-OUTPUT RULES: Return STRICT JSON format with keys: headline, narrative, category, sentiment, impact_score, affected_stocks, affected_sectors."""
+    TELEMETRY: Close: {log.get('niftyClose')}, Change: {log.get('niftyChangePercent')}%
+    OBJECTIVES:
+    1. Identify 3-5 high-impact financial news stories for this date using Google Search.
+    2. Explain how these influenced institutional pressure.
+    3. Categorize the move and identify affected sectors.
+    OUTPUT RULES: Return STRICT JSON format with keys: headline, narrative, category, sentiment, impact_score, affected_stocks, affected_sectors."""
 
     try:
         response = ai_client.models.generate_content(
-            model='gemini-3-pro-preview', 
+            model='gemini-3-pro-preview',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=sys_instr,
                 tools=[types.Tool(google_search=types.GoogleSearch())],
-                thinking_config=types.ThinkingConfig(thinking_level="high", include_thoughts=True)
+                thinking_config=types.ThinkingConfig(include_thoughts=True, thinking_level="high")
             )
         )
-        result = extract_json(response.text)
-        return jsonify(result)
-        
+        return jsonify(extract_json(response.text))
     except Exception as e:
-        print(f"Gemini 3 Execution Error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# Stock Specific Forensic Audit
 @app.route('/api/gemini/stock-deep-dive', methods=['POST'])
 def analyze_stock():
     data = request.json or {}
-    symbol = data.get('symbol', 'ABB')
+    symbol = data.get('symbol', data.get('stock_code', 'ABB')).upper()
     
-    # Ingest Live Telemetry
-    quote_res, status = get_market_quote() 
+    # 1. Fetch market data for telemetry
+    quote_res, status = get_market_quote()
     quote_data = quote_res.get("Success", {}) if status == 200 else {}
-
-    # FIX: Added vertexai=False here to match analyze_market and stop the 401 loop
-    ai_client = genai.Client(api_key=GEMINI_API_KEY, vertexai=False)
     
+    ltp = quote_data.get('last_traded_price', 'N/A')
+    p_change = quote_data.get('percent_change', '0')
+    vol = quote_data.get('volume', 'N/A')
+
+    # 2. Strict Lead Strategist Directives
     sys_instr = """You are a Lead Quantitative Strategist at a Tier-1 Hedge Fund. 
     Your expertise is in 'Event-Driven Alpha.' Use Gemini 3's Deep Think mode 
-    to find causal links between telemetry and news. Prioritize actionable signals."""
-    
+    to find causal links between telemetry and news. Prioritize actionable signals. 
+    DO NOT simplify the objectives. Provide a high-fidelity forensic audit with specific data points."""
+
+    # 3. High-Fidelity Prompt
     prompt = f"""PERFORM FORENSIC AUDIT FOR: {symbol}
-LTP: {quote_data.get('last_traded_price')}, Change: {quote_data.get('percent_change')}%
-Volume: {quote_data.get('volume')}
+    LTP: {ltp} | Change: {p_change}% | Volume: {vol}
 
-OBJECTIVES:
-1. CAUSAL IDENTIFICATION: Use Search to find why {symbol} moved {quote_data.get('percent_change')}% today.
-2. INSTITUTIONAL FOOTPRINT: Based on volume {quote_data.get('volume')}, is this Accumulation or Distribution?
-3. ANALYST CONSENSUS: Find 3 recent ratings/targets from last 14 days.
-4. ALGO TRADE PLAN: Provide Entry, Stop-Loss, and Take-Profit for a 5-day swing.
+    OBJECTIVES:
+    1. CAUSAL IDENTIFICATION: Use Search to find why {symbol} moved {p_change}% today. Identify specific news/events.
+    2. INSTITUTIONAL FOOTPRINT: Based on volume {vol}, is this Accumulation or Distribution? Provide reasoning.
+    3. ANALYST CONSENSUS: Find 3 recent ratings/targets from last 14 days.
+    4. ALGO TRADE PLAN: Provide Entry, Stop-Loss, and Take-Profit for a 5-day swing.
 
-OUTPUT RULES: Return STRICT JSON with keys: headline, forensic_narrative, sentiment_score, institutional_bias, swing_setup, analyst_calls, source_citations."""
+    OUTPUT RULES: Return STRICT JSON format with keys: headline, forensic_narrative, sentiment_score, institutional_bias, swing_setup, analyst_calls, source_citations."""
 
     try:
         response = ai_client.models.generate_content(
-            model='gemini-3-pro-preview', 
+            model='gemini-3-pro-preview',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=sys_instr,
                 tools=[types.Tool(google_search=types.GoogleSearch())],
-                thinking_config=types.ThinkingConfig(thinking_level="high", include_thoughts=True)
+                thinking_config=types.ThinkingConfig(include_thoughts=True, thinking_level="high"),
+                temperature=1.0
             )
         )
-        result = extract_json(response.text)
-        return jsonify(result)
-
+        return jsonify(extract_json(response.text))
     except Exception as e:
-        print(f"Gemini 3 Execution Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # Using host 0.0.0.0 for instance access
+    # Binding for GCP Instance access
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
