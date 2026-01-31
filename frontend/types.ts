@@ -42,6 +42,13 @@ export interface LiquidityMetrics {
   avg_vol_20d: number | null;
 }
 
+export interface ResearchTask {
+  id: string;
+  date: string;
+  status: 'PENDING' | 'COMPLETED' | 'FAILED';
+  result?: string;
+}
+
 export type Reg30Source = 'XBRL' | 'CorpAction' | 'CreditRating' | 'RSS';
 export type Reg30EventFamily = 
   | 'ORDER_CONTRACT' 

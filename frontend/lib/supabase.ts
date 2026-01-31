@@ -1,7 +1,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://xbnzvmgawikqzxutmoea.supabase.co';
-const supabaseAnonKey = 'sb_publishable_8TYnAzAX4s-CHAPVOpmLEA_Puqwcuwo';
+// Use environment variables for Supabase credentials
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://xbnzvmgawikqzxutmoea.supabase.co';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_8TYnAzAX4s-CHAPVOpmLEA_Puqwcuwo';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
