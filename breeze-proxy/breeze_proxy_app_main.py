@@ -1,3 +1,5 @@
+print("--- Python script starting ---")
+
 import secrets
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -9,7 +11,7 @@ import logging
 
 app = Flask(__name__)
 
-# Enable CORS for all routes
+# Enable CORS for frontend access
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Configure Logging
@@ -79,20 +81,11 @@ def ensure_breeze_session():
 
 # --- API Routes ---
 
-@app.route("/", methods=["GET"])
-def root_health():
-    """Root health check for Cloud Run and general monitoring."""
-    return jsonify({
-        "status": "ok",
-        "service": "breeze-proxy",
-        "version": "1.0.0"
-    })
-
-@app.route("/breeze/health", methods=["GET"])
+@app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
 
-@app.route("/breeze/admin/api-session", methods=["POST"])
+@app.route("/admin/api-session", methods=["POST"])
 def set_session():
     """Handshake from UI to activate the daily data pipe."""
     global DAILY_SESSION_TOKEN
@@ -155,7 +148,7 @@ def set_session():
         }), 500
 
 
-@app.route("/breeze/quotes", methods=["POST"])
+@app.route("/quotes", methods=["POST"])
 def get_quotes():
     client, err_resp, status_code = ensure_breeze_session()
     if err_resp: 
@@ -194,7 +187,7 @@ def get_quotes():
         return jsonify({"error": str(e)}), 500
 
 # --- Corrected Market Depth ---
-@app.route("/breeze/depth", methods=["POST"])
+@app.route("/depth", methods=["POST"])
 def get_depth():
     # client, err_resp, status_code = ensure_breeze_session() 
     # Use the 3-variable unpack we fixed earlier
@@ -219,7 +212,7 @@ def get_depth():
         logger.error(f"Market Depth error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/breeze/historical", methods=["POST"])
+@app.route("/historical", methods=["POST"])
 def get_historical():
     client, err_resp, status_code = ensure_breeze_session()
     if err_resp: 
@@ -242,57 +235,19 @@ def get_historical():
 # --- Application Startup Configuration ---
 if __name__ == "__main__":
     # Get port from environment variable
-    # DEFAULT: 8081 - Chosen to avoid conflict with Jupyter (8080) and frontend (8080)
-    # Cloud Run: Will override with PORT=8080 environment variable
-    # To use custom port: PORT=9000 python breeze_proxy_app.py
+    # Default to 8081 locally to avoid conflict with Jupyter on 8080
+    # Cloud Run will set PORT environment variable to 8080
     port = int(os.environ.get("PORT", 8081))
     
-    # Check if port is already in use
-    import socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    result = sock.connect_ex(('127.0.0.1', port))
-    sock.close()
-    
-    if result == 0:
-        logger.error(f"❌ ERROR: Port {port} is already in use!")
-        logger.error(f"   Jupyter or another process may be using this port.")
-        logger.error(f"   Solutions:")
-        logger.error(f"   1. Set custom port: PORT=8082 python breeze_proxy_app.py")
-        logger.error(f"   2. Kill process on port {port}: lsof -ti:{port} | xargs kill -9")
-        logger.error(f"   3. Use different port (e.g., 8082, 8083, 9000)")
-        import sys
-        sys.exit(1)
-    
     # Log startup information
-    logger.info("=" * 70)
-    logger.info(f"🚀 Starting Breeze Proxy Server")
-    logger.info("=" * 70)
-    logger.info(f"Port: {port}")
-    logger.info(f"Host: 0.0.0.0 (all interfaces)")
-    logger.info(f"")
-    logger.info(f"Health check: http://localhost:{port}/")
-    logger.info(f"Breeze health: http://localhost:{port}/breeze/health")
-    logger.info(f"Admin session: http://localhost:{port}/breeze/admin/api-session")
-    logger.info(f"")
-    logger.info(f"API Endpoints:")
-    logger.info(f"  - POST /breeze/quotes")
-    logger.info(f"  - POST /breeze/depth")
-    logger.info(f"  - POST /breeze/historical")
-    logger.info("=" * 70)
+    logger.info(f"Starting Breeze Proxy on port {port}")
+    logger.info(f"Health check available at http://0.0.0.0:{port}/health")
+    logger.info(f"Admin session endpoint at http://0.0.0.0:{port}/admin/api-session")
     
     # Run the Flask app
     # Note: For production deployment, use Gunicorn or similar WSGI server
-    try:
-        app.run(
-            host="0.0.0.0",  # Listen on all interfaces
-            port=port,        # Use configured port
-            debug=False       # Production mode
-        )
-    except OSError as e:
-        if "Address already in use" in str(e):
-            logger.error(f"❌ ERROR: Port {port} is in use!")
-            logger.error(f"   Try: PORT=8082 python breeze_proxy_app.py")
-        else:
-            logger.error(f"❌ ERROR: {e}")
-        import sys
-        sys.exit(1)
+    app.run(
+        host="0.0.0.0",  # Listen on all interfaces
+        port=port,        # Use configured port
+        debug=False       # Production mode
+    )

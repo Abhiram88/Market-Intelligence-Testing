@@ -43,27 +43,59 @@ Port 8080 is used by the frontend (Vite dev server), so the Breeze proxy uses 80
 pip install -r requirements.txt
 ```
 
-### Set Environment Variables
-```bash
-# Required for local development
-export BREEZE_API_KEY="your_api_key"
-export BREEZE_API_SECRET="your_api_secret"
-export BREEZE_PROXY_ADMIN_KEY="your_admin_key"
+### Port Configuration
 
-# Optional - defaults to 8081
-export PORT=8081
+**IMPORTANT: Port 8080 Conflict with Jupyter**
+
+If you're running in a Jupyter environment, port 8080 may already be in use. The Breeze proxy defaults to **port 8081** to avoid this conflict.
+
+**Port Assignment:**
+- Frontend: 8080 (Vite dev server)
+- Main Backend: 5000 (app.py)
+- **Breeze Proxy: 8081** (breeze_proxy_app.py) ← Default to avoid Jupyter conflict
+
+### Starting the Service
+
+**Option 1: Smart Startup Script (Recommended)**
+
+The script automatically finds an available port:
+```bash
+cd breeze-proxy
+./start.sh
 ```
 
-### Run the Service
+**Option 2: Direct Python**
+
+Default port (8081):
 ```bash
 python breeze_proxy_app.py
 ```
 
-The service will start on port 8081 (or the PORT environment variable).
-
-Test it:
+Custom port:
 ```bash
-curl http://localhost:8081/
+PORT=8082 python breeze_proxy_app.py
+```
+
+**Option 3: If Port Conflict Persists**
+
+Kill the process using the port:
+```bash
+# Find and kill process on port 8081
+lsof -ti:8081 | xargs kill -9
+
+# Then start normally
+python breeze_proxy_app.py
+```
+
+### Set Environment Variables
+```bash
+# Required for local development (if not using Google Secret Manager)
+export BREEZE_API_KEY="your_api_key"
+export BREEZE_API_SECRET="your_api_secret"
+export BREEZE_PROXY_ADMIN_KEY="your_admin_key"
+
+# For Google Secret Manager (default)
+export GCP_PROJECT_ID="919207294606"
 ```
 
 ## Google Cloud Run Deployment
