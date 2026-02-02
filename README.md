@@ -2,13 +2,78 @@
 
 A real-time market intelligence dashboard for Indian equities using ICICI Direct API and Gemini AI.
 
+## 🚀 Quick Start - How to Run
+
+This application has **THREE** services that run together:
+
+```
+Frontend (8080) → Backend (5000) → Breeze Proxy (8081)
+    React UI    →   app.py      →   ICICI API
+```
+
+### Easiest Way: Use the Startup Script
+
+```bash
+chmod +x start-all.sh
+./start-all.sh
+```
+
+Then open http://localhost:8080
+
+### Manual Way: Three Terminals
+
+```bash
+# Terminal 1: Backend (REQUIRED)
+python app.py
+
+# Terminal 2: Breeze Proxy (REQUIRED)  
+cd breeze-proxy && ./start.sh
+
+# Terminal 3: Frontend (REQUIRED)
+cd frontend && npm start
+```
+
+**📖 For complete details, see [HOW_TO_RUN.md](HOW_TO_RUN.md)**
+
+---
+
 ## Architecture
 
+### Three-Tier Application
+
 - **Frontend**: React + TypeScript + Vite (Port 8080)
-- **Backend API**: Flask (Port 5000)
-- **Breeze Proxy**: Flask (Port 8081 - separate service)
-- **Database**: Supabase
-- **AI**: Google Gemini 2.5
+  - User interface and visualizations
+  - Connects to Backend API
+  
+- **Backend API** (`app.py`): Flask (Port 5000) **← Main API Server**
+  - **Why this exists**: Acts as middleware between frontend and services
+  - Integrates with Google Gemini AI for market analysis
+  - Manages Supabase database connections
+  - Forwards requests to Breeze Proxy
+  - Provides unified API for frontend
+  - **Must run for frontend to work!**
+  
+- **Breeze Proxy** (`breeze-proxy/breeze_proxy_app.py`): Flask (Port 8081)
+  - Direct interface to ICICI Breeze API
+  - Manages API sessions and credentials
+  - Can be deployed to Cloud Run independently
+  
+- **Database**: Supabase (cloud hosted)
+- **AI**: Google Gemini 2.5 (cloud hosted)
+
+### Request Flow
+
+```
+User → Frontend (8080) → Backend/app.py (5000) → Breeze Proxy (8081) → ICICI API
+                              ↓
+                         Gemini AI
+                              ↓
+                         Supabase DB
+```
+
+**All three services (Frontend, Backend, Breeze Proxy) must be running!**
+
+---
 
 ## Issue Fixed: ERR_CONNECTION_TIMED_OUT
 
