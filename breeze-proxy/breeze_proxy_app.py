@@ -1,5 +1,6 @@
 import secrets
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from breeze_connect import BreezeConnect
 from google.cloud import secretmanager
 import os
@@ -7,6 +8,9 @@ import json
 import logging
 
 app = Flask(__name__)
+
+# Enable CORS for all routes
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -74,6 +78,15 @@ def ensure_breeze_session():
     return client, None, None
 
 # --- API Routes ---
+
+@app.route("/", methods=["GET"])
+def root_health():
+    """Root health check for Cloud Run and general monitoring."""
+    return jsonify({
+        "status": "ok",
+        "service": "breeze-proxy",
+        "version": "1.0.0"
+    })
 
 @app.route("/breeze/health", methods=["GET"])
 def health():
@@ -227,4 +240,17 @@ def get_historical():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8081, debug=True)
+    # Get port from environment variable (required for Cloud Run)
+    port = int(os.environ.get("PORT", 8081))
+    
+    # Log startup information
+    logger.info(f"Starting Breeze Proxy on port {port}")
+    logger.info(f"Health check available at http://0.0.0.0:{port}/")
+    logger.info(f"Breeze API health at http://0.0.0.0:{port}/breeze/health")
+    
+    # Run the Flask app
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False  # Set to False for production
+    )
