@@ -3,6 +3,7 @@ import { MarketLog, ResearchTask } from './types';
 export const MOCK_MARKET_LOG: MarketLog = {
   id: 'log-001',
   log_date: new Date().toISOString().split('T')[0],
+  date: new Date().toISOString().split('T')[0],
   ltp: 22450.30,
   points_change: 125.45,
   change_percent: 0.56,
@@ -11,6 +12,9 @@ export const MOCK_MARKET_LOG: MarketLog = {
   volume: 12500000,
   source: 'ICICI Breeze',
   is_live: false, // Mock data is not live
+  niftyClose: 22324.85,
+  niftyChange: 125.45,
+  niftyChangePercent: 0.56,
 };
 
 export const PRIORITY_STOCKS = [

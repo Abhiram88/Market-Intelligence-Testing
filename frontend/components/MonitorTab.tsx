@@ -66,20 +66,20 @@ const MonitorTab: React.FC = () => {
         fetchDepth(stockSymbol)
       ]);
 
-      const bid = parseFloat(depth.best_bid_price || quote.best_bid_price || 0);
-      const ask = parseFloat(depth.best_offer_price || quote.best_offer_price || 0);
+      const bid = parseFloat(String(depth.best_bid_price || quote.best_bid_price || 0));
+      const ask = parseFloat(String(depth.best_offer_price || quote.best_offer_price || 0));
       const mid = (bid + ask) / 2;
       const spread = mid > 0 ? ((ask - bid) / mid) * 100 : null;
       
       setStockMetrics({
         spread_pct: spread,
-        depth_ratio: (parseFloat(depth.best_bid_quantity || 0) + 1) / (parseFloat(depth.best_offer_quantity || 0) + 1),
+        depth_ratio: (parseFloat(String(depth.best_bid_quantity || 0)) + 1) / (parseFloat(String(depth.best_offer_quantity || 0)) + 1),
         vol_ratio: null,
         regime: 'NEUTRAL',
         execution_style: spread && spread < 0.15 ? 'OK FOR MARKET' : 'LIMIT ONLY',
         bid, ask, 
-        bidQty: parseFloat(depth.best_bid_quantity || 0), 
-        askQty: parseFloat(depth.best_offer_quantity || 0),
+        bidQty: parseFloat(String(depth.best_bid_quantity || 0)), 
+        askQty: parseFloat(String(depth.best_offer_quantity || 0)),
         avg_vol_20d: null
       });
 

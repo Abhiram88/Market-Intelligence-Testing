@@ -45,7 +45,7 @@ export interface LiquidityMetrics {
 export interface ResearchTask {
   id: string;
   date: string;
-  status: 'PENDING' | 'COMPLETED' | 'FAILED';
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   result?: string;
 }
 
@@ -108,4 +108,16 @@ export interface Reg30Report {
   conversion_bonus?: number;
   execution_months?: number | null;
   order_type?: string;
+  customer?: string;
+}
+
+export interface Reg30Analysis {
+  summary: string;
+  impact_score: number;
+  recommendation: ActionRecommendation;
+  confidence: number;
+  missing_fields?: string[];
+  evidence_spans?: string[];
+  extracted_data?: any;
+  extracted?: any;
 }

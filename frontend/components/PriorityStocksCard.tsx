@@ -259,7 +259,7 @@ export const PriorityStocksCard: React.FC = () => {
                   <div className="flex flex-col">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-black text-slate-900">{stock.symbol}</span>
-                      {error && <AlertCircle className="w-3 h-3 text-red-500" title={error} />}
+                      {error && <AlertCircle className="w-3 h-3 text-red-500" aria-label={error} />}
                     </div>
                     <span className="text-[7px] font-bold text-slate-400 uppercase truncate max-w-[100px]">{stock.company_name}</span>
                   </div>

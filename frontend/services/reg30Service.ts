@@ -4,9 +4,20 @@ import {
   Reg30Source, 
   Reg30EventFamily, 
   Sentiment, 
-  ActionRecommendation 
+  ActionRecommendation,
+  Reg30Analysis
 } from "../types";
-import { analyzeReg30Event, analyzeEventNarrative } from "./reg30GeminiService";
+// Stub functions for Gemini AI (these should be backend calls instead)
+const analyzeReg30Event = async (candidate: EventCandidate): Promise<Reg30Analysis> => {
+  // This should call the backend API instead of using Gemini directly
+  throw new Error("analyzeReg30Event should be implemented on backend");
+};
+
+const analyzeEventNarrative = async (report: any): Promise<any> => {
+  // This should call the backend API instead of using Gemini directly  
+  throw new Error("analyzeEventNarrative should be implemented on backend");
+};
+
 import { supabase } from "../lib/supabase";
 
 /**

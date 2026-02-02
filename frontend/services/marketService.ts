@@ -82,6 +82,7 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
       // Persistence (throttled)
       if (now - lastDbWriteTimestamp > 30000) {
         const marketLog: Omit<MarketLog, 'id' | 'log_date'> = {
+          date: new Date().toISOString().split('T')[0],
           ltp: niftyData.last_traded_price,
           points_change: niftyData.change,
           change_percent: niftyData.percent_change,
@@ -90,6 +91,9 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
           volume: niftyData.volume,
           source: 'Breeze Direct',
           is_live: true,
+          niftyClose: niftyData.last_traded_price,
+          niftyChange: niftyData.change,
+          niftyChangePercent: niftyData.percent_change,
         };
         await supabase.from('market_logs').upsert(marketLog, { onConflict: 'log_date' });
         lastDbWriteTimestamp = now;
@@ -131,6 +135,7 @@ export const fetchLastKnownNiftyClose = async (): Promise<BreezeQuote> => {
         // Also persist this one-time fetch
         const marketLog: Omit<MarketLog, 'id'> = {
             log_date: new Date().toISOString().split('T')[0],
+            date: new Date().toISOString().split('T')[0],
             ltp: niftyData.last_traded_price,
             points_change: niftyData.change,
             change_percent: niftyData.percent_change,
@@ -139,6 +144,9 @@ export const fetchLastKnownNiftyClose = async (): Promise<BreezeQuote> => {
             volume: niftyData.volume,
             source: 'Breeze Direct',
             is_live: false,
+            niftyClose: niftyData.last_traded_price,
+            niftyChange: niftyData.change,
+            niftyChangePercent: niftyData.percent_change,
           };
         await supabase.from('market_logs').upsert(marketLog, { onConflict: 'log_date' });
         return niftyData;
