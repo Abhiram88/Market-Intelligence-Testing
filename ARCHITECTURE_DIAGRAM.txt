@@ -1,0 +1,212 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║                   MARKET INTELLIGENCE APPLICATION                            ║
+║                         THREE-TIER ARCHITECTURE                              ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│                              1. FRONTEND                                    │
+│                            Port 8080                                        │
+│                                                                             │
+│  File: frontend/                                                            │
+│  Tech: React + TypeScript + Vite                                           │
+│  Purpose: User Interface                                                    │
+│                                                                             │
+│  Features:                                                                  │
+│  • Market monitoring dashboard                                             │
+│  • Stock charts and visualizations                                         │
+│  • AI insights display                                                     │
+│  • User interactions                                                       │
+│                                                                             │
+│  Start: cd frontend && npm start                                           │
+│  Access: http://localhost:8080                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ HTTP Requests
+                                    │ /api/*
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│                              2. BACKEND                                     │
+│                            Port 5000                                        │
+│                                                                             │
+│  File: app.py (in root directory)                                          │
+│  Tech: Flask + Python                                                      │
+│  Purpose: Main API Server & Middleware                                     │
+│                                                                             │
+│  Responsibilities:                                                          │
+│  • Process API requests from frontend                                      │
+│  • Forward market data requests to Breeze Proxy                            │
+│  • Integrate with Google Gemini AI for analysis                            │
+│  • Manage Supabase database connections                                    │
+│  • Handle business logic and data processing                               │
+│                                                                             │
+│  API Endpoints:                                                             │
+│  • /api/market/*    - Market data (→ Breeze Proxy)                        │
+│  • /api/gemini/*    - AI analysis (→ Gemini)                              │
+│  • /api/breeze/*    - Session management (→ Breeze Proxy)                 │
+│  • /api/reg30/*     - Regulatory analysis                                  │
+│                                                                             │
+│  Start: python app.py                                                       │
+│  Access: http://localhost:5000                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                    │                              │
+                    │                              │
+      Market Data   │                              │ AI Analysis
+      Requests      │                              │ & Storage
+                    ↓                              ↓
+┌──────────────────────────────┐    ┌──────────────────────────────┐
+│                              │    │                              │
+│    3. BREEZE PROXY           │    │     EXTERNAL SERVICES        │
+│       Port 8081              │    │                              │
+│                              │    │  • Google Gemini AI          │
+│  File: breeze-proxy/         │    │  • Supabase Database         │
+│        breeze_proxy_app.py   │    │                              │
+│  Tech: Flask + breeze_connect│    │                              │
+│  Purpose: ICICI API Bridge   │    │                              │
+│                              │    │                              │
+│  Responsibilities:           │    │                              │
+│  • Manage ICICI API sessions │    └──────────────────────────────┘
+│  • Fetch live market data    │
+│  • Handle credentials        │
+│  • Store secrets securely    │
+│                              │
+│  API Endpoints:              │
+│  • /health - Health check    │
+│  • /breeze/quotes - Quotes   │
+│  • /breeze/depth - Depth     │
+│  • /breeze/historical - Data │
+│                              │
+│  Start: cd breeze-proxy &&   │
+│         ./start.sh           │
+│  Access: localhost:8081      │
+│                              │
+└──────────────────────────────┘
+                    │
+                    │ Breeze Connect API
+                    ↓
+┌──────────────────────────────┐
+│                              │
+│    ICICI BREEZE API          │
+│    (External Cloud Service)  │
+│                              │
+│  • Live market data          │
+│  • Stock quotes              │
+│  • Historical data           │
+│  • Market depth              │
+│                              │
+└──────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║                           REQUEST FLOW EXAMPLE                               ║
+║                     (User wants to see NIFTY 50 data)                        ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Step 1: User opens dashboard
+   → Browser loads http://localhost:8080
+
+Step 2: Frontend requests NIFTY data
+   → Frontend: GET /api/market/nifty-realtime
+
+Step 3: Vite proxy forwards to backend
+   → Proxy: → http://localhost:5000/api/market/nifty-realtime
+
+Step 4: Backend receives request
+   → app.py: Processes request
+
+Step 5: Backend calls Breeze Proxy
+   → Backend: → http://localhost:8081/breeze/quotes
+
+Step 6: Breeze Proxy calls ICICI
+   → Breeze Proxy: → ICICI Breeze API
+
+Step 7: Data flows back
+   → ICICI → Breeze Proxy → Backend
+
+Step 8: Backend adds AI analysis
+   → Backend: → Google Gemini AI (optional)
+
+Step 9: Backend returns to Frontend
+   → Backend → Frontend
+
+Step 10: User sees data
+   → Frontend displays in dashboard
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║                            WHY THREE SERVICES?                               ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+SEPARATION OF CONCERNS
+────────────────────────────────────────────────────────────────────────────────
+Frontend:      Only UI logic, no API keys, no business logic
+Backend:       Business logic, AI integration, data processing
+Breeze Proxy:  Only ICICI API interface, credentials management
+
+
+INDEPENDENT SCALING
+────────────────────────────────────────────────────────────────────────────────
+• Frontend can be static files on CDN
+• Backend can scale based on AI/DB load
+• Breeze Proxy can be shared by multiple apps
+
+
+SECURITY
+────────────────────────────────────────────────────────────────────────────────
+• API keys never exposed to browser
+• Credentials managed in separate service
+• Breeze Proxy can run on Cloud Run with Secret Manager
+
+
+DEPLOYMENT FLEXIBILITY
+────────────────────────────────────────────────────────────────────────────────
+• Deploy Breeze Proxy once, reuse for multiple projects
+• Update frontend without touching backend
+• Deploy backend without affecting Breeze sessions
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║                            STARTUP CHECKLIST                                 ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Quick Start (Automatic):
+───────────────────────────────────────────────────────────────────────────────
+  ./start-all.sh
+
+
+Manual Start (Three Terminals):
+───────────────────────────────────────────────────────────────────────────────
+  Terminal 1: python app.py
+  Terminal 2: cd breeze-proxy && ./start.sh
+  Terminal 3: cd frontend && npm start
+
+
+Verification:
+───────────────────────────────────────────────────────────────────────────────
+  ✓ Backend:      curl http://localhost:5000/api/market/nifty-realtime
+  ✓ Breeze Proxy: curl http://localhost:8081/health
+  ✓ Frontend:     Open http://localhost:8080 in browser
+
+
+Required Ports:
+───────────────────────────────────────────────────────────────────────────────
+  • 8080 - Frontend (must be free)
+  • 5000 - Backend (must be free)
+  • 8081 - Breeze Proxy (or 8082, 8083 if 8081 is busy)
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         ALL THREE SERVICES REQUIRED!                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
