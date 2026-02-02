@@ -113,7 +113,7 @@ export const setDailyBreezeSession = async (apiSession: string, adminKey: string
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Proxy-Key": adminKey
+      "X-Proxy-Admin-Key": adminKey
     },
     body: JSON.stringify({ api_session: apiSession })
   });

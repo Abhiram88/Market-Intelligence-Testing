@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { fetchRealtimeMarketTelemetry, MarketTelemetry, getMarketSessionStatus } from '../services/marketService';
 import { Activity, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
 
+import { io } from 'socket.io-client';
+
 const formatVolume = (vol: number) => {
   if (!vol) return '--';
   return `${(vol / 1000000).toFixed(2)}M`;
@@ -12,8 +14,6 @@ export const NiftyRealtimeCard: React.FC = () => {
   const [telemetry, setTelemetry] = useState<MarketTelemetry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -30,13 +30,29 @@ export const NiftyRealtimeCard: React.FC = () => {
 
     fetchData(); // Initial fetch
 
-    // Setup polling
-    pollIntervalRef.current = setInterval(fetchData, 1000); 
+    const socket = io("http://localhost:5000");
+
+    socket.on('connect', () => {
+        console.log('Nifty socket connected');
+        const proxy_key = localStorage.getItem('breeze_proxy_key') || '';
+        socket.emit('subscribe_to_watchlist', {
+            stocks: ['NIFTY'],
+            proxy_key: proxy_key
+        });
+    });
+
+    socket.on('watchlist_update', (data) => {
+      if(data.symbol === 'NIFTY') {
+        setTelemetry(prev => ({ ...prev, ...data, dataSource: 'Breeze Direct' }));
+      }
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Nifty socket disconnected');
+    });
 
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      socket.disconnect();
     };
   }, []);
 

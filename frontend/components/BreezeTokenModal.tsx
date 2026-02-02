@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Key, ShieldCheck, Server } from 'lucide-react';
-import { setDailyBreezeSession, checkProxyHealth } from '../services/breezeService';
+import { setBreezeSession } from '../services/apiService';
 
 interface BreezeTokenModalProps {
   isOpen: boolean;
@@ -33,16 +33,11 @@ const BreezeTokenModal: React.FC<BreezeTokenModalProps> = ({ isOpen, onClose }) 
       localStorage.setItem('breeze_proxy_key', proxyKey);
       localStorage.setItem('breeze_proxy_url', proxyUrl);
 
-      // 2. Perform a pre-flight health check on the proxy
-      const health = await checkProxyHealth();
-      if (!health.ok) {
-        throw new Error(`Proxy unreachable at ${proxyUrl}. Check your Cloud Run logs.`);
-      }
 
       // 3. Activate the session if a token is provided
       if (apiSession) {
         // This triggers the /admin/api-session endpoint in your proxy
-        await setDailyBreezeSession(apiSession, proxyKey);
+        await setBreezeSession(apiSession, proxyKey);
         setMessage('Session successfully activated!');
       } else {
         setMessage('Configuration saved.');

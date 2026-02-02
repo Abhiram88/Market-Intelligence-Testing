@@ -1,3 +1,5 @@
+print("--- Python script starting ---")
+
 import secrets
 from flask import Flask, request, jsonify
 from breeze_connect import BreezeConnect
@@ -75,11 +77,11 @@ def ensure_breeze_session():
 
 # --- API Routes ---
 
-@app.route("/breeze/health", methods=["GET"])
+@app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
 
-@app.route("/breeze/admin/api-session", methods=["POST"])
+@app.route("/admin/api-session", methods=["POST"])
 def set_session():
     """Handshake from UI to activate the daily data pipe."""
     global DAILY_SESSION_TOKEN
@@ -142,7 +144,7 @@ def set_session():
         }), 500
 
 
-@app.route("/breeze/quotes", methods=["POST"])
+@app.route("/quotes", methods=["POST"])
 def get_quotes():
     client, err_resp, status_code = ensure_breeze_session()
     if err_resp: 
@@ -181,7 +183,7 @@ def get_quotes():
         return jsonify({"error": str(e)}), 500
 
 # --- Corrected Market Depth ---
-@app.route("/breeze/depth", methods=["POST"])
+@app.route("/depth", methods=["POST"])
 def get_depth():
     # client, err_resp, status_code = ensure_breeze_session() 
     # Use the 3-variable unpack we fixed earlier
@@ -206,7 +208,7 @@ def get_depth():
         logger.error(f"Market Depth error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/breeze/historical", methods=["POST"])
+@app.route("/historical", methods=["POST"])
 def get_historical():
     client, err_resp, status_code = ensure_breeze_session()
     if err_resp: 
@@ -225,6 +227,3 @@ def get_historical():
         return jsonify(res), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8081, debug=True)

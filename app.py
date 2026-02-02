@@ -1,4 +1,3 @@
-
 import os
 import json
 import datetime
@@ -6,17 +5,19 @@ import requests
 import pytz
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 from google import genai
 from google.genai import types
 from supabase import create_client, Client
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # --- CONFIGURATION ---
 GEMINI_API_KEY = os.environ.get("API_KEY")
 # This should be the URL of your deployed breeze_proxy_app.py
-BREEZE_PROXY_URL = os.environ.get("BREEZE_PROXY_SERVICE_URL", "https://maia-breeze-proxy-service-919207294606.us-central1.run.app").rstrip("/")
+BREEZE_PROXY_URL = "https://maia-breeze-proxy-service-919207294606.us-central1.run.app".rstrip("/")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xbnzvmgawikqzxutmoea.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "sb_publishable_8TYnAzAX4s-CHAPVOpmLEA_Puqwcuwo")
 
@@ -79,13 +80,44 @@ def get_proxy_headers():
 def set_session():
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/admin/api-session",
+            f"{BREEZE_PROXY_URL}/admin/api-session",
             json=request.json,
             headers={"X-Proxy-Admin-Key": request.headers.get("X-Proxy-Admin-Key")}
         )
+        print("--- PROXY DEBUG (set_session) ---")
+        print(f"Status Code: {res.status_code}")
+        print(f"Headers: {res.headers}")
+        print(f"Raw Text: {res.text}")
+        print("-------------------------------------")
         return jsonify(res.json()), res.status_code
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+def get_quote_data(symbol, proxy_key=""):
+    breeze_code = get_breeze_symbol(symbol)
+    payload = {
+        "stock_code": breeze_code,
+        "exchange_code": "NSE",
+        "product_type": "cash"
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "X-Proxy-Key": proxy_key
+    }
+    try:
+        res = requests.post(
+            f"{BREEZE_PROXY_URL}/quotes",
+            json=payload,
+            headers=headers
+        )
+        print("--- PROXY DEBUG (get_quote_data) ---")
+        print(f"Status Code: {res.status_code}")
+        print(f"Headers: {res.headers}")
+        print(f"Raw Text: {res.text}")
+        print("--------------------------------------")
+        return res.json(), res.status_code
+    except Exception as e:
+        return {"status": "error", "message": str(e)}, 500
 
 @app.route('/api/market/quote', methods=['POST'])
 def get_quote():
@@ -94,22 +126,9 @@ def get_quote():
     if not symbol:
         return jsonify({"status": "error", "message": "Symbol is required"}), 400
     
-    breeze_code = get_breeze_symbol(symbol)
-    payload = {
-        "stock_code": breeze_code,
-        "exchange_code": "NSE",
-        "product_type": "cash"
-    }
-
-    try:
-        res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/quotes",
-            json=payload,
-            headers=get_proxy_headers()
-        )
-        return jsonify(res.json()), res.status_code
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    proxy_key = request.headers.get("X-Proxy-Key", "")
+    quote, status_code = get_quote_data(symbol, proxy_key)
+    return jsonify(quote), status_code
 
 @app.route('/api/market/depth', methods=['POST'])
 def get_depth():
@@ -127,7 +146,7 @@ def get_depth():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/depth",
+            f"{BREEZE_PROXY_URL}/depth",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -157,7 +176,7 @@ def get_historical():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/historical",
+            f"{BREEZE_PROXY_URL}/historical",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -169,7 +188,7 @@ def get_historical():
 def get_nifty_realtime():
     if is_indian_market_open():
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/quotes",
+            f"{BREEZE_PROXY_URL}/quotes",
             json={"stock_code": "NIFTY", "exchange_code": "NSE", "product_type": "cash"},
             headers=get_proxy_headers()
         )
@@ -258,8 +277,7 @@ def analyze_stock():
     
     sys_instr = "You are a Senior Equity Analyst specializing in Indian Equities. Perform a forensic audit of a specific stock based on recent news and market data."
     
-    prompt = f"""As a Senior Equity Analyst, perform a FORENSIC AUDIT for the NSE stock symbol: {symbol} for the date: {date}.
-    
+    prompt = f"""As a Senior Equity Analyst, perform a FORENSIC AUDIT for the NSE stock symbol: {symbol} for the date: {date}.    
 OBJECTIVES:
 1. Determine the price movement drivers for {symbol} based on recent news.
 2. Find specific reasons for recent moves (Earnings, Order Wins, Corporate Actions, Sectoral pressure, etc.).
@@ -336,5 +354,39 @@ def analyze_reg30():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# --- SOCKET.IO HANDLERS ---
+@socketio.on('connect')
+def handle_connect():
+    print('Client connected:', request.sid)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected:', request.sid)
+
+@socketio.on('subscribe_to_watchlist')
+def handle_watchlist_subscription(data):
+    sid = request.sid
+    stock_list = data.get('stocks', [])
+    proxy_key = data.get('proxy_key', '')
+    print(f"Client {sid} subscribed to watchlist: {stock_list}")
+    socketio.start_background_task(track_watchlist, stock_list, proxy_key, sid)
+
+def track_watchlist(stock_list, proxy_key, sid):
+    is_connected = True
+    while is_connected:
+        if not socketio.server.manager.is_connected(sid):
+            is_connected = False
+            break
+
+        for symbol in stock_list:
+            quote, status = get_quote_data(symbol, proxy_key)
+            if status == 200:
+                if quote.get("Success"):
+                    quote["Success"]["symbol"] = symbol
+                    socketio.emit('watchlist_update', quote["Success"], room=sid)
+            else:
+                print(f"Error fetching quote for {symbol}: {quote}")
+        socketio.sleep(5)
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    socketio.run(app, host='0.0.0.0', port=5000)

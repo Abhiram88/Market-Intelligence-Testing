@@ -1,5 +1,5 @@
-
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { io } from 'socket.io-client';
 import { supabase } from '../lib/supabase';
 import { fetchQuote, fetchDepth, fetchHistorical } from '../services/apiService';
 import { getMarketSessionStatus } from '../services/marketService';
@@ -187,27 +187,59 @@ export const PriorityStocksCard: React.FC = () => {
   };
 
   useEffect(() => {
+    // This effect handles the initial data load
     const init = async () => {
       const stocks = await fetchTrackedSymbols();
       if (stocks.length > 0) {
-        updateQuotesBatch(stocks, true);
+        updateQuotesBatch(stocks, true); // Run once to get initial data
         stocks.forEach(s => refreshHistoricalData(s.symbol));
       }
     };
     init();
-
-    pollInterval.current = setInterval(() => {
-      const marketStatus = getMarketSessionStatus();
-      if (marketStatus.isOpen) {
-        setPriorityStocks(currentList => {
-          updateQuotesBatch(currentList);
-          return currentList;
-        });
-      }
-    }, 10000);
-
-    return () => { if (pollInterval.current) clearInterval(pollInterval.current); };
   }, [updateQuotesBatch]);
+
+  useEffect(() => {
+    // This effect handles the real-time updates
+    if (priorityStocks.length === 0) return;
+
+    const socket = io("http://localhost:5000");
+
+    socket.on('connect', () => {
+        console.log('Socket connected');
+        const proxy_key = localStorage.getItem('breeze_proxy_key') || '';
+        socket.emit('subscribe_to_watchlist', {
+            stocks: priorityStocks.map(s => s.symbol),
+            proxy_key: proxy_key
+        });
+    });
+
+    socket.on('watchlist_update', (data) => {
+        setQuotes(prev => ({ ...prev, [data.symbol]: data }));
+        // Also update the priorityStocks array to reflect the new price
+        setPriorityStocks(prev => prev.map(stock => {
+            if (stock.symbol === data.symbol) {
+                return {
+                    ...stock,
+                    last_price: parseFloat(data.last_traded_price || data.ltp),
+                    change_val: parseFloat(data.change),
+                    change_percent: parseFloat(data.percent_change || data.ltp_percent_change),
+                    last_updated: new Date().toISOString()
+                };
+            }
+            return stock;
+        }));
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Socket disconnected');
+    });
+
+    // Cleanup on component unmount
+    return () => {
+        socket.disconnect();
+    };
+  }, [priorityStocks]);
+
 
   const marketStatus = getMarketSessionStatus();
 
