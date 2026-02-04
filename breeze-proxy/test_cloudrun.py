@@ -67,11 +67,11 @@ def test_all_endpoints():
     
     required_endpoints = [
         ('/', {'GET'}),
-        ('/breeze/health', {'GET'}),
-        ('/breeze/admin/api-session', {'POST'}),
-        ('/breeze/quotes', {'POST'}),
-        ('/breeze/depth', {'POST'}),
-        ('/breeze/historical', {'POST'}),
+        ('/api/breeze/health', {'GET'}),
+        ('/api/breeze/admin/api-session', {'POST'}),
+        ('/api/breeze/quotes', {'POST'}),
+        ('/api/breeze/depth', {'POST'}),
+        ('/api/breeze/historical', {'POST'}),
     ]
     
     routes = {rule.rule: rule.methods for rule in breeze_proxy_app.app.url_map.iter_rules()}

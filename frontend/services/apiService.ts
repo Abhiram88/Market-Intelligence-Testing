@@ -1,6 +1,7 @@
 /**
  * API Service - Connects Frontend to Backend APIs
  * Provides functions for market data, quotes, and AI analysis
+ .
  */
 
 import { MarketLog, NewsAttribution } from '../types';

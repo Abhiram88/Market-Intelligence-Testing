@@ -9,7 +9,7 @@ import logging
 
 app = Flask(__name__)
 
-# Enable CORS for all routes
+# Enable CORS for all routes.
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Configure Logging
@@ -73,7 +73,7 @@ def ensure_breeze_session():
         except Exception as e:
             return None, jsonify({"error": f"Session invalid: {e}"}), 401
     elif not client.session_key:
-        return None, jsonify({"error": "Breeze session token not set. Use /admin/api-session"}), 401
+        return None, jsonify({"error": "Breeze session token not set. Use /api/breeze/admin/api-session"}), 401
     
     return client, None, None
 
@@ -88,11 +88,11 @@ def root_health():
         "version": "1.0.0"
     })
 
-@app.route("/breeze/health", methods=["GET"])
+@app.route("/api/breeze/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
 
-@app.route("/breeze/admin/api-session", methods=["POST"])
+@app.route("/api/breeze/admin/api-session", methods=["POST"])
 def set_session():
     """Handshake from UI to activate the daily data pipe."""
     global DAILY_SESSION_TOKEN
@@ -155,7 +155,7 @@ def set_session():
         }), 500
 
 
-@app.route("/breeze/quotes", methods=["POST"])
+@app.route("/api/breeze/quotes", methods=["POST"])
 def get_quotes():
     client, err_resp, status_code = ensure_breeze_session()
     if err_resp: 
@@ -194,7 +194,7 @@ def get_quotes():
         return jsonify({"error": str(e)}), 500
 
 # --- Corrected Market Depth ---
-@app.route("/breeze/depth", methods=["POST"])
+@app.route("/api/breeze/depth", methods=["POST"])
 def get_depth():
     # client, err_resp, status_code = ensure_breeze_session() 
     # Use the 3-variable unpack we fixed earlier
@@ -219,7 +219,7 @@ def get_depth():
         logger.error(f"Market Depth error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/breeze/historical", methods=["POST"])
+@app.route("/api/breeze/historical", methods=["POST"])
 def get_historical():
     client, err_resp, status_code = ensure_breeze_session()
     if err_resp: 
@@ -271,13 +271,13 @@ if __name__ == "__main__":
     logger.info(f"Host: 0.0.0.0 (all interfaces)")
     logger.info(f"")
     logger.info(f"Health check: http://localhost:{port}/")
-    logger.info(f"Breeze health: http://localhost:{port}/breeze/health")
-    logger.info(f"Admin session: http://localhost:{port}/breeze/admin/api-session")
+    logger.info(f"Breeze health: http://localhost:{port}/api/breeze/health")
+    logger.info(f"Admin session: http://localhost:{port}/api/breeze/admin/api-session")
     logger.info(f"")
     logger.info(f"API Endpoints:")
-    logger.info(f"  - POST /breeze/quotes")
-    logger.info(f"  - POST /breeze/depth")
-    logger.info(f"  - POST /breeze/historical")
+    logger.info(f"  - POST /api/breeze/quotes")
+    logger.info(f"  - POST /api/breeze/depth")
+    logger.info(f"  - POST /api/breeze/historical")
     logger.info("=" * 70)
     
     # Run the Flask app

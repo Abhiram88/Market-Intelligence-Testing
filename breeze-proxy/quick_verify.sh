@@ -41,10 +41,10 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Test 2: Breeze Health Check"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Request: GET /breeze/health"
+echo "Request: GET /api/breeze/health"
 echo ""
 
-response=$(curl -s -w "\n%{http_code}" "$SERVICE_URL/breeze/health")
+response=$(curl -s -w "\n%{http_code}" "$SERVICE_URL/api/breeze/health")
 http_code=$(echo "$response" | tail -n 1)
 body=$(echo "$response" | head -n -1)
 
@@ -64,10 +64,10 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Test 3: CORS Headers"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Request: OPTIONS /breeze/quotes (with CORS headers)"
+echo "Request: OPTIONS /api/breeze/quotes (with CORS headers)"
 echo ""
 
-cors_response=$(curl -s -I -X OPTIONS "$SERVICE_URL/breeze/quotes" \
+cors_response=$(curl -s -I -X OPTIONS "$SERVICE_URL/api/breeze/quotes" \
   -H "Origin: http://localhost:8080" \
   -H "Access-Control-Request-Method: POST" \
   -H "Access-Control-Request-Headers: Content-Type")
@@ -87,11 +87,11 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Test 4: Quotes Endpoint (No Session)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Request: POST /breeze/quotes"
+echo "Request: POST /api/breeze/quotes"
 echo "Payload: {\"stock_code\":\"NIFTY\"}"
 echo ""
 
-response=$(curl -s -w "\n%{http_code}" -X POST "$SERVICE_URL/breeze/quotes" \
+response=$(curl -s -w "\n%{http_code}" -X POST "$SERVICE_URL/api/breeze/quotes" \
   -H "Content-Type: application/json" \
   -d '{"stock_code":"NIFTY"}')
 http_code=$(echo "$response" | tail -n 1)
@@ -126,6 +126,6 @@ echo "   Traffic can flow through the proxy to the Breeze API."
 echo ""
 echo "Next steps:"
 echo "  1. Update frontend to use this URL"
-echo "  2. Set daily session token via /breeze/admin/api-session"
+echo "  2. Set daily session token via /api/breeze/admin/api-session"
 echo "  3. Start fetching market data"
 echo ""

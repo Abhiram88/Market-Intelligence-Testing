@@ -1,4 +1,5 @@
 
+
 import os
 import json
 import datetime
@@ -24,7 +25,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "sb_publishable_8TYnA
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = genai.Client(api_key=GEMINI_API_KEY, vertexai=True)
 
-# Cache for symbol mappings
+# Cache for symbol mappings.
 mapping_cache = {}
 
 # --- HELPERS ---
@@ -79,7 +80,7 @@ def get_proxy_headers():
 def set_session():
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/admin/api-session",
+            f"{BREEZE_PROXY_URL}/api/breeze/admin/api-session",
             json=request.json,
             headers={"X-Proxy-Admin-Key": request.headers.get("X-Proxy-Admin-Key")}
         )
@@ -103,7 +104,7 @@ def get_quote():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/quotes",
+            f"{BREEZE_PROXY_URL}/api/breeze/quotes",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -127,7 +128,7 @@ def get_depth():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/depth",
+            f"{BREEZE_PROXY_URL}/api/breeze/depth",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -157,7 +158,7 @@ def get_historical():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/historical",
+            f"{BREEZE_PROXY_URL}/api/breeze/historical",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -169,7 +170,7 @@ def get_historical():
 def get_nifty_realtime():
     if is_indian_market_open():
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/quotes",
+            f"{BREEZE_PROXY_URL}/api/breeze/quotes",
             json={"stock_code": "NIFTY", "exchange_code": "NSE", "product_type": "cash"},
             headers=get_proxy_headers()
         )

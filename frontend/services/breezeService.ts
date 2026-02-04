@@ -1,9 +1,10 @@
 /**
  * ICICI BREEZE API CLIENT
+ .
  */
 import { supabase } from '../lib/supabase';
 
-const DEFAULT_PROXY_URL = "https://breeze-proxy-919207294606.us-west1.run.app";
+const DEFAULT_PROXY_URL = "https://maia-breeze-proxy-service-919207294606.us-central1.run.app";
 
 const HARDCODED_MAPPINGS: Record<string, string> = {
   'AHLUCONT': 'AHLCON',
@@ -113,7 +114,7 @@ export const setDailyBreezeSession = async (apiSession: string, adminKey: string
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Proxy-Key": adminKey
+      "X-Proxy-Admin-Key": adminKey
     },
     body: JSON.stringify({ api_session: apiSession })
   });
