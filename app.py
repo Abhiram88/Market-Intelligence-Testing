@@ -76,7 +76,7 @@ def get_proxy_headers():
     }
 
 # --- BREEZE PROXY ENDPOINTS ---
-@app.route('/api/breeze/admin/api-session', methods=['POST'])
+@app.route('/api/breeze/admin/api-session', methods=['POST', 'OPTIONS'])
 def set_session():
     try:
         res = requests.post(
@@ -118,7 +118,7 @@ def get_quote_data(symbol, proxy_key=""):
     except Exception as e:
         return {"status": "error", "message": str(e)}, 500
 
-@app.route('/api/market/quote', methods=['POST'])
+@app.route('/api/market/quote', methods=['POST', 'OPTIONS'])
 def get_quote():
     data = request.json
     symbol = data.get("symbol")
@@ -129,7 +129,7 @@ def get_quote():
     quote, status_code = get_quote_data(symbol, proxy_key)
     return jsonify(quote), status_code
 
-@app.route('/api/market/depth', methods=['POST'])
+@app.route('/api/market/depth', methods=['POST', 'OPTIONS'])
 def get_depth():
     data = request.json
     symbol = data.get("symbol")
@@ -153,7 +153,7 @@ def get_depth():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/market/historical', methods=['POST'])
+@app.route('/api/market/historical', methods=['POST', 'OPTIONS'])
 def get_historical():
     data = request.json
     symbol = data.get("symbol")
@@ -213,7 +213,7 @@ def get_nifty_realtime():
     return jsonify({"error": "No data available"}), 404
 
 # --- GEMINI INTELLIGENCE ENDPOINTS ---
-@app.route('/api/gemini/analyze_market_log', methods=['POST'])
+@app.route('/api/gemini/analyze_market_log', methods=['POST', 'OPTIONS'])
 def analyze_market():
     log = request.json
     log_date = log.get('log_date', str(get_ist_now().date()))
@@ -268,7 +268,7 @@ Return the response in STRICT JSON format with keys: headline, narrative, catego
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/gemini/stock-deep-dive', methods=['POST'])
+@app.route('/api/gemini/stock-deep-dive', methods=['POST', 'OPTIONS'])
 def analyze_stock():
     data = request.json
     symbol = data.get('symbol')
@@ -302,7 +302,7 @@ Return the response in STRICT JSON format with keys: headline, narrative, catego
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/reg30/analyze_event_text', methods=['POST'])
+@app.route('/api/reg30/analyze_event_text', methods=['POST', 'OPTIONS'])
 def analyze_reg30():
     data = request.json
     event_text = data.get("event_text")

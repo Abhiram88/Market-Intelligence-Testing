@@ -46,7 +46,7 @@ interface HistoricalBar {
  * Fetch a quote for a given stock symbol
  */
 export const fetchQuote = async (symbol: string): Promise<QuoteResponse> => {
-  const response = await fetch(`${API_BASE_URL}/breeze/quotes`, {
+  const response = await fetch(`${API_BASE_URL}/api/breeze/quotes`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -74,7 +74,7 @@ export const fetchQuote = async (symbol: string): Promise<QuoteResponse> => {
  * Fetch market depth for a given stock symbol
  */
 export const fetchDepth = async (symbol: string): Promise<DepthResponse> => {
-  const response = await fetch(`${API_BASE_URL}/breeze/depth`, {
+  const response = await fetch(`${API_BASE_URL}/api/breeze/depth`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -112,7 +112,7 @@ export const fetchHistorical = async (
   fromDate: string,
   toDate: string
 ): Promise<HistoricalBar[]> => {
-  const response = await fetch(`${API_BASE_URL}/breeze/historical`, {
+  const response = await fetch(`${API_BASE_URL}/api/breeze/historical`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -196,7 +196,7 @@ export const analyzeStockDeepDive = async (symbol: string): Promise<NewsAttribut
  * Set the Breeze API session
  */
 export const setBreezeSession = async (apiSession: string, adminKey: string) => {
-  const response = await fetch(`${API_BASE_URL}/breeze/admin/api-session`, {
+  const response = await fetch(`${API_BASE_URL}/api/breeze/admin/api-session`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
