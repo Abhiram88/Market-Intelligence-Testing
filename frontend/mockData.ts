@@ -11,6 +11,10 @@ export const MOCK_MARKET_LOG: MarketLog = {
   volume: 12500000,
   source: 'ICICI Breeze',
   is_live: true,
+  niftyClose: 22450.30,
+  niftyChange: 125.45,
+  niftyChangePercent: 0.56,
+  date: new Date().toISOString().split('T')[0],
 };
 
 export const PRIORITY_STOCKS = [
@@ -22,7 +26,7 @@ export const PRIORITY_STOCKS = [
 ];
 
 export const INITIAL_RESEARCH_TASKS: ResearchTask[] = [
-  { id: '1', date: '2024-05-20', status: 'COMPLETED', result: 'High volatility detected due to election sentiment.' },
-  { id: '2', date: '2024-05-21', status: 'PENDING' },
-  { id: '3', date: '2024-05-22', status: 'PENDING' },
+  { id: '1', symbol: 'NIFTY', date: '2024-05-20', status: 'completed', result: 'High volatility detected due to election sentiment.', prompt: 'Analyze NIFTY volatility on 2024-05-20' },
+  { id: '2', symbol: 'NIFTY', date: '2024-05-21', status: 'pending', result: null, prompt: 'Analyze NIFTY volatility on 2024-05-21' },
+  { id: '3', symbol: 'NIFTY', date: '2024-_5-22', status: 'pending', result: null, prompt: 'Analyze NIFTY volatility on 2024-05-22' },
 ];

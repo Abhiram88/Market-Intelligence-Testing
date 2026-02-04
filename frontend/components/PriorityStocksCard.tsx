@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { supabase } from '../lib/supabase';
-import { fetchQuote, fetchDepth, fetchHistorical } from '../services/apiService';
+import { fetchQuote, fetchDepth, fetchHistorical, QuoteResponse, DepthResponse } from '../services/apiService';
 import { getMarketSessionStatus } from '../services/marketService';
 import { LiquidityMetrics } from '../types';
-import { X, ArrowUp, ArrowDown, Bookmark, RefreshCw, Activity, AlertCircle } from 'lucide-react';
+import { X, ArrowUp, ArrowDown, Bookmark, AlertCircle } from 'lucide-react';
 
 interface PriorityStock {
   symbol: string;
@@ -17,15 +17,14 @@ interface PriorityStock {
 
 export const PriorityStocksCard: React.FC = () => {
   const [priorityStocks, setPriorityStocks] = useState<PriorityStock[]>([]);
-  const [quotes, setQuotes] = useState<Record<string, any>>({});
-  const [depths, setDepths] = useState<Record<string, any>>({});
+  const [quotes, setQuotes] = useState<Record<string, QuoteResponse>>({});
+  const [depths, setDepths] = useState<Record<string, DepthResponse>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [historicalCache, setHistoricalCache] = useState<Record<string, number>>({});
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const [showRawFeed, setShowRawFeed] = useState(false);
   
-  const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isUpdatingRef = useRef(false);
+  const isUpdatingRef = React.useRef(false);
 
   const fetchTrackedSymbols = async () => {
     try {
@@ -66,7 +65,7 @@ export const PriorityStocksCard: React.FC = () => {
     }
   };
 
-  const updateQuotesBatch = useCallback(async (stocks: PriorityStock[], forceOnce: boolean = false) => {
+  const updateQuotesBatch = React.useCallback(async (stocks: PriorityStock[], forceOnce: boolean = false) => {
     const marketStatus = getMarketSessionStatus();
     if (!marketStatus.isOpen && !forceOnce) return;
     if (document.hidden) return; 
@@ -79,12 +78,12 @@ export const PriorityStocksCard: React.FC = () => {
       await new Promise(r => setTimeout(r, 300)); // Stagger
 
       try {
-        let quote = null;
-        let depth = null;
+        let quote: QuoteResponse | null = null;
+        let depth: DepthResponse | null = null;
 
         try {
           quote = await fetchQuote(stock.symbol);
-          setQuotes(prev => ({ ...prev, [stock.symbol]: quote }));
+          setQuotes(prev => ({ ...prev, [stock.symbol]: quote! }));
           setErrors(prev => {
             const next = { ...prev };
             delete next[stock.symbol];
@@ -96,7 +95,7 @@ export const PriorityStocksCard: React.FC = () => {
 
         try {
           depth = await fetchDepth(stock.symbol);
-          setDepths(prev => ({ ...prev, [stock.symbol]: depth }));
+          setDepths(prev => ({ ...prev, [stock.symbol]: depth! }));
         } catch (dErr) {
           console.warn(`Depth failed for ${stock.symbol}`);
         }
@@ -105,9 +104,9 @@ export const PriorityStocksCard: React.FC = () => {
           supabase
             .from('priority_stocks')
             .update({
-              last_price: parseFloat(quote.last_traded_price || quote.ltp),
-              change_val: parseFloat(quote.change),
-              change_percent: parseFloat(quote.percent_change || quote.ltp_percent_change),
+              last_price: quote.last_traded_price || quote.ltp,
+              change_val: quote.change,
+              change_percent: quote.percent_change || quote.ltp_percent_change,
               last_updated: new Date().toISOString()
             })
             .eq('symbol', stock.symbol)
@@ -126,21 +125,21 @@ export const PriorityStocksCard: React.FC = () => {
     const avgVol = historicalCache[symbol];
     if (!q) return null;
 
-    const bid = parseFloat(d?.best_bid_price || q.best_bid_price || 0);
-    const ask = parseFloat(d?.best_offer_price || q.best_offer_price || 0);
-    const bidQty = parseFloat(d?.best_bid_quantity || q.best_bid_quantity || 0);
-    const askQty = parseFloat(d?.best_offer_quantity || q.best_offer_quantity || 0);
+    const bid = d?.best_bid_price || q.best_bid_price || 0;
+    const ask = d?.best_offer_price || q.best_offer_price || 0;
+    const bidQty = d?.best_bid_quantity || q.best_bid_quantity || 0;
+    const askQty = d?.best_offer_quantity || q.best_offer_quantity || 0;
     const mid = (bid + ask) / 2;
     
     const spread_pct = mid > 0 ? ((ask - bid) / mid) * 100 : null;
     const depth_ratio = (bidQty + 1) / (askQty + 1);
-    const vol_today = parseFloat(q.total_quantity_traded || q.volume || 0);
+    const vol_today = q.total_quantity_traded || q.volume || 0;
     const vol_ratio = avgVol ? vol_today / avgVol : null;
 
-    const close = parseFloat(q.last_traded_price || q.ltp || 0);
-    const high = parseFloat(q.high || 0);
-    const low = parseFloat(q.low || 0);
-    const open = parseFloat(q.open || 0);
+    const close = q.last_traded_price || q.ltp || 0;
+    const high = q.high || 0;
+    const low = q.low || 0;
+    const open = q.open || 0;
     const range = Math.max(high - low, 0.01);
 
     const wick_ratio = (high - Math.max(open, close)) / range;
@@ -202,7 +201,7 @@ export const PriorityStocksCard: React.FC = () => {
     // This effect handles the real-time updates
     if (priorityStocks.length === 0) return;
 
-    const socket = io("http://localhost:5000");
+    const socket = io("https://maia-breeze-proxy-service-919207294606.us-central1.run.app");
 
     socket.on('connect', () => {
         console.log('Socket connected');
@@ -220,9 +219,9 @@ export const PriorityStocksCard: React.FC = () => {
             if (stock.symbol === data.symbol) {
                 return {
                     ...stock,
-                    last_price: parseFloat(data.last_traded_price || data.ltp),
-                    change_val: parseFloat(data.change),
-                    change_percent: parseFloat(data.percent_change || data.ltp_percent_change),
+                    last_price: data.last_traded_price || data.ltp,
+                    change_val: data.change,
+                    change_percent: data.percent_change || data.ltp_percent_change,
                     last_updated: new Date().toISOString()
                 };
             }
@@ -279,7 +278,7 @@ export const PriorityStocksCard: React.FC = () => {
             const quote = quotes[stock.symbol];
             const metrics = calculateMetrics(stock.symbol);
             const error = errors[stock.symbol];
-            const isPositive = parseFloat(quote?.change || 0) >= 0;
+            const isPositive = (quote?.change || 0) >= 0;
             const isExpanded = expandedSymbol === stock.symbol;
 
             return (
@@ -291,7 +290,7 @@ export const PriorityStocksCard: React.FC = () => {
                   <div className="flex flex-col">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-black text-slate-900">{stock.symbol}</span>
-                      {error && <AlertCircle className="w-3 h-3 text-red-500" title={error} />}
+                      {error && <AlertCircle className="w-3 h-3 text-red-500" />}
                     </div>
                     <span className="text-[7px] font-bold text-slate-400 uppercase truncate max-w-[100px]">{stock.company_name}</span>
                   </div>
@@ -300,11 +299,11 @@ export const PriorityStocksCard: React.FC = () => {
                     {quote ? (
                       <div className="text-right">
                         <p className="text-xs font-black text-slate-900 tabular-nums">
-                          {parseFloat(quote.last_traded_price || quote.ltp).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          {(quote.last_traded_price || quote.ltp || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </p>
                         <div className={`flex items-center justify-end gap-1 text-[8px] font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {isPositive ? <ArrowUp className="w-2 h-2" /> : <ArrowDown className="w-2 h-2" />}
-                          <span className="tabular-nums">{Math.abs(parseFloat(quote.percent_change || quote.ltp_percent_change)).toFixed(2)}%</span>
+                          <span className="tabular-nums">{Math.abs(quote.percent_change || quote.ltp_percent_change || 0).toFixed(2)}%</span>
                         </div>
                       </div>
                     ) : (
@@ -368,7 +367,7 @@ export const PriorityStocksCard: React.FC = () => {
                             <div className="grid grid-cols-4 gap-4 pt-4 border-t border-slate-50">
                               <div className="flex flex-col gap-1.5">
                                 <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Vol Today</p>
-                                <p className="text-[9px] font-black text-slate-900">{(quote?.total_quantity_traded ? (parseFloat(quote.total_quantity_traded) / 1000000).toFixed(2) : '—')}M</p>
+                                <p className="text-[9px] font-black text-slate-900">{(quote?.total_quantity_traded ? ((quote.total_quantity_traded) / 1000000).toFixed(2) : '—')}M</p>
                               </div>
                               <div className="flex flex-col gap-1.5 text-center">
                                 <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Vol Ratio</p>

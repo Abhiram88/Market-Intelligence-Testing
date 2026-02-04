@@ -102,3 +102,22 @@ export interface Reg30Report {
   execution_months?: number | null;
   order_type?: string;
 }
+
+export interface ResearchTask {
+  id: string;
+  symbol: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  result: string | null;
+  prompt: string;
+  date: string;
+}
+
+export interface Reg30Analysis {
+  summary: string;
+  impact_score: number;
+  recommendation: ActionRecommendation;
+  confidence: number;
+  missing_fields: string[];
+  evidence_spans: string[];
+  extracted: any;
+}

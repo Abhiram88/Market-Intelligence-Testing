@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/index.tsx","./types.ts","./mockData.ts","./services/apiService.ts","./services/breezeService.ts","./services/geminiService.ts","./services/marketService.ts","./services/reg30GeminiService.ts","./services/reg30Service.ts"],"version":"5.9.3"}

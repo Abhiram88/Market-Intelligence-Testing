@@ -8,14 +8,12 @@ import {
   RefreshCw, 
   CheckCircle, 
   FileText,
-  Activity,
   ChevronLeft,
   ChevronRight,
   Search,
   Trash2,
   Bookmark,
-  Star,
-  Loader2
+  Star
 } from 'lucide-react';
 import { 
   parseNseCsv, 
@@ -35,7 +33,6 @@ const Reg30Tab: React.FC = () => {
   const [candidates, setCandidates] = useState<EventCandidate[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
-  const [progress, setProgress] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [minImpact, setMinImpact] = useState(0);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -78,9 +75,7 @@ const Reg30Tab: React.FC = () => {
     const total = candidates.length;
     
     try {
-      const newReports = await runReg30Analysis(candidates, (id, step) => {
-        setProgress(prev => ({ ...prev, [id]: step }));
-        
+      const newReports = await runReg30Analysis(candidates, (id) => {
         const index = candidates.findIndex(c => c.id === id);
         if (index !== -1) {
           const symbol = candidates[index].symbol || 'Unknown';

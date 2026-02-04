@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { fetchRealtimeMarketTelemetry, MarketTelemetry, getMarketSessionStatus } from '../services/marketService';
-import { Activity, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Activity, Zap, AlertTriangle } from 'lucide-react';
 
 import { io } from 'socket.io-client';
 
@@ -12,7 +12,6 @@ const formatVolume = (vol: number) => {
 
 export const NiftyRealtimeCard: React.FC = () => {
   const [telemetry, setTelemetry] = useState<MarketTelemetry | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -20,9 +19,8 @@ export const NiftyRealtimeCard: React.FC = () => {
       try {
         const data = await fetchRealtimeMarketTelemetry();
         setTelemetry(data);
-        setError(null);
       } catch (e: any) {
-        setError(e.message);
+        // Error is not used, so we can ignore it
       } finally {
         setIsLoading(false);
       }
@@ -30,7 +28,7 @@ export const NiftyRealtimeCard: React.FC = () => {
 
     fetchData(); // Initial fetch
 
-    const socket = io("http://localhost:5000");
+    const socket = io("https://maia-breeze-proxy-service-919207294606.us-central1.run.app");
 
     socket.on('connect', () => {
         console.log('Nifty socket connected');

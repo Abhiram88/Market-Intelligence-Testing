@@ -90,6 +90,10 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
           volume: niftyData.volume,
           source: 'Breeze Direct',
           is_live: true,
+          date: new Date().toISOString().split('T')[0],
+          niftyClose: niftyData.last_traded_price,
+          niftyChange: niftyData.change,
+          niftyChangePercent: niftyData.percent_change,
         };
         await supabase.from('market_logs').upsert(marketLog, { onConflict: 'log_date' });
         lastDbWriteTimestamp = now;
@@ -139,6 +143,10 @@ export const fetchLastKnownNiftyClose = async (): Promise<BreezeQuote> => {
             volume: niftyData.volume,
             source: 'Breeze Direct',
             is_live: false,
+            date: new Date().toISOString().split('T')[0],
+            niftyClose: niftyData.last_traded_price,
+            niftyChange: niftyData.change,
+            niftyChangePercent: niftyData.percent_change,
           };
         await supabase.from('market_logs').upsert(marketLog, { onConflict: 'log_date' });
         return niftyData;

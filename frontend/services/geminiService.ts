@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { MarketLog, NewsAttribution } from "../types";
 import { supabase } from "../lib/supabase";
 
@@ -29,7 +29,7 @@ export const analyzeMarketLog = async (log: MarketLog): Promise<NewsAttribution>
   const apiKey = process.env.API_KEY || '';
   if (!apiKey) throw new Error("API Key missing");
   
-  const ai = new GoogleGenAI({ apiKey, vertexai: true });
+  const ai = new GoogleGenerativeAI(apiKey);
 
   const direction = log.niftyChange >= 0 ? "upward (BULLISH)" : "downward (BEARISH)";
   
@@ -61,18 +61,9 @@ Return the response in STRICT JSON format with the following keys:
 }`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        tools: [{ googleSearch: {} }],
-        // CRITICAL: responseMimeType and responseSchema are NOT allowed when using googleSearch tool
-      }
-    });
+    const response = await ai.getGenerativeModel({ model: MODEL_NAME, systemInstruction }).generateContent(prompt);
 
-    const text = response.text;
-    if (!text) throw new Error("AI analysis engine returned empty.");
+    const text = response.response.text();
 
     const result = extractJson(text);
     
@@ -117,7 +108,7 @@ export const analyzeStockIntelligence = async (symbol: string, date: string = ne
   const apiKey = process.env.API_KEY || '';
   if (!apiKey) throw new Error("API Key missing");
   
-  const ai = new GoogleGenAI({ apiKey, vertexai: true });
+  const ai = new GoogleGenerativeAI(apiKey);
 
   const systemInstruction = "You are a Senior Equity Analyst specializing in Indian Equities. Perform a forensic audit of a specific stock based on recent news and market data.";
 
@@ -148,17 +139,9 @@ Return the response in STRICT JSON format with the following keys:
 }`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        tools: [{ googleSearch: {} }],
-        // CRITICAL: responseMimeType and responseSchema are NOT allowed when using googleSearch tool
-      }
-    });
+    const response = await ai.getGenerativeModel({ model: MODEL_NAME, systemInstruction }).generateContent(prompt);
 
-    const text = response.text;
+    const text = response.response.text();
     if (!text) throw new Error("Stock AI engine returned empty.");
 
     const result = extractJson(text);

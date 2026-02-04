@@ -65,7 +65,7 @@ const resolveApiUrl = (endpoint: string) => {
 };
 
 export const checkProxyHealth = async () => {
-  const apiUrl = resolveApiUrl(`/api/breeze/health`);
+  const apiUrl = resolveApiUrl(`/breeze/health`);
   try {
     const response = await fetch(apiUrl);
     if (!response.ok) return { ok: false, error: 'Proxy unreachable' };
@@ -108,7 +108,7 @@ export const getStockMappings = async (symbols: string[]): Promise<Record<string
 };
 
 export const setDailyBreezeSession = async (apiSession: string, adminKey: string) => {
-  const apiUrl = resolveApiUrl(`/api/breeze/admin/api-session`);
+  const apiUrl = resolveApiUrl(`/breeze/admin/api-session`);
   const response = await fetch(apiUrl, {
     method: "POST",
     headers: {
@@ -131,7 +131,7 @@ export const setDailyBreezeSession = async (apiSession: string, adminKey: string
 };
 
 export const fetchBreezeQuote = async (stockCode: string): Promise<BreezeQuote> => {
-  const apiUrl = resolveApiUrl(`/api/breeze/quotes`);
+  const apiUrl = resolveApiUrl(`/breeze/quotes`);
   const proxyKey = localStorage.getItem('breeze_proxy_key') || "";
 
   const response = await fetch(apiUrl, {
@@ -187,7 +187,7 @@ export const fetchBreezeQuote = async (stockCode: string): Promise<BreezeQuote> 
 };
 
 export const fetchBreezeDepth = async (stockCode: string): Promise<BreezeDepth> => {
-  const apiUrl = resolveApiUrl(`/api/breeze/depth`);
+  const apiUrl = resolveApiUrl(`/breeze/depth`);
   const proxyKey = localStorage.getItem('breeze_proxy_key') || "";
 
   const response = await fetch(apiUrl, {
@@ -217,7 +217,7 @@ export const fetchBreezeDepth = async (stockCode: string): Promise<BreezeDepth> 
 };
 
 export const fetchBreezeHistorical = async (stockCode: string, fromDate: string, toDate: string, interval: string = '1day'): Promise<HistoricalBar[]> => {
-  const apiUrl = resolveApiUrl(`/api/breeze/historical`);
+  const apiUrl = resolveApiUrl(`/breeze/historical`);
   const proxyKey = localStorage.getItem('breeze_proxy_key') || "";
 
   const response = await fetch(apiUrl, {

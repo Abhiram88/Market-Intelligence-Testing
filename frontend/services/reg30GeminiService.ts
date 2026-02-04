@@ -1,4 +1,5 @@
 import { EventCandidate, Reg30Analysis } from "../types";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 
 const MODEL_NAME = "gemini-2.5-flash";
 
@@ -9,7 +10,7 @@ export const analyzeReg30Event = async (candidate: EventCandidate): Promise<Reg3
     return null;
   }
   
-  const ai = new GoogleGenAI({ apiKey, vertexai: true });
+  const ai = new GoogleGenerativeAI(apiKey);
 
   const documentBody = candidate.attachment_text ? candidate.attachment_text.substring(0, 30000) : "";
 
@@ -35,41 +36,39 @@ export const analyzeReg30Event = async (candidate: EventCandidate): Promise<Reg3
     Document Text: ${documentBody}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const model = ai.getGenerativeModel({
       model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        // thinkingConfig: { thinkingBudget: 4000 }, // Use if available on the model
+      systemInstruction,
+      generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.OBJECT,
+          type: SchemaType.OBJECT,
           properties: {
-            summary: { type: Type.STRING },
-            impact_score: { type: Type.INTEGER },
-            recommendation: { type: Type.STRING, enum: ['ACTIONABLE_BULLISH', 'ACTIONABLE_BEARISH_RISK', 'HIGH_PRIORITY_WATCH', 'TRACK', 'NEEDS_MANUAL_REVIEW', 'IGNORE'] },
-            confidence: { type: Type.NUMBER },
-            missing_fields: { type: Type.ARRAY, items: { type: Type.STRING } },
-            evidence_spans: { type: Type.ARRAY, items: { type: Type.STRING } },
+            summary: { type: SchemaType.STRING },
+            impact_score: { type: SchemaType.INTEGER },
+            recommendation: { type: SchemaType.STRING, format: "enum", enum: ['ACTIONABLE_BULLISH', 'ACTIONABLE_BEARISH_RISK', 'HIGH_PRIORITY_WATCH', 'TRACK', 'NEEDS_MANUAL_REVIEW', 'IGNORE'] },
+            confidence: { type: SchemaType.NUMBER },
+            missing_fields: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+            evidence_spans: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
             extracted: {
-              type: Type.OBJECT,
+              type: SchemaType.OBJECT,
               properties: {
-                order_value_cr: { type: Type.NUMBER },
-                stage: { type: Type.STRING },
-                international: { type: Type.BOOLEAN },
-                new_customer: { type: Type.BOOLEAN },
-                execution_months: { type: Type.NUMBER, description: "Time period for execution in months" },
-                execution_years: { type: Type.NUMBER, description: "Time period for execution in years" },
-                order_type: { type: Type.STRING, enum: ["SUPPLY", "EPC", "SERVICES", "MAINTENANCE", "MIXED", "UNKNOWN"] },
-                end_date: { type: Type.STRING, description: "The completion/end date mentioned (YYYY-MM-DD)" },
-                conditionality: { type: Type.STRING, enum: ["HIGH", "MEDIUM", "LOW"] },
-                rating_action: { type: Type.STRING },
-                notches: { type: Type.NUMBER },
-                outlook_change: { type: Type.STRING },
-                amount_cr: { type: Type.NUMBER },
-                stage_legal: { type: Type.STRING },
-                ops_impact: { type: Type.STRING },
-                customer: { type: Type.STRING }
+                order_value_cr: { type: SchemaType.NUMBER },
+                stage: { type: SchemaType.STRING },
+                international: { type: SchemaType.BOOLEAN },
+                new_customer: { type: SchemaType.BOOLEAN },
+                execution_months: { type: SchemaType.NUMBER, description: "Time period for execution in months" },
+                execution_years: { type: SchemaType.NUMBER, description: "Time period for execution in years" },
+                order_type: { type: SchemaType.STRING, format: "enum", enum: ["SUPPLY", "EPC", "SERVICES", "MAINTENANCE", "MIXED", "UNKNOWN"] },
+                end_date: { type: SchemaType.STRING, description: "The completion/end date mentioned (YYYY-MM-DD)" },
+                conditionality: { type: SchemaType.STRING, format: "enum", enum: ["HIGH", "MEDIUM", "LOW"] },
+                rating_action: { type: SchemaType.STRING },
+                notches: { type: SchemaType.NUMBER },
+                outlook_change: { type: SchemaType.STRING },
+                amount_cr: { type: SchemaType.NUMBER },
+                stage_legal: { type: SchemaType.STRING },
+                ops_impact: { type: SchemaType.STRING },
+                customer: { type: SchemaType.STRING }
               }
             }
           },
@@ -78,7 +77,9 @@ export const analyzeReg30Event = async (candidate: EventCandidate): Promise<Reg3
       }
     });
 
-    const text = response.text;
+    const response = await model.generateContent(prompt);
+
+    const text = response.response.text();
     if (!text) return null;
     return JSON.parse(text) as Reg30Analysis;
   } catch (error) {
@@ -94,7 +95,7 @@ export const analyzeEventNarrative = async (inputs: any): Promise<{ event_analys
   const apiKey = process.env.API_KEY || '';
   if (!apiKey) return null;
   
-  const ai = new GoogleGenAI({ apiKey, vertexai: true });
+  const ai = new GoogleGenerativeAI(apiKey);
 
   const systemInstruction = `
     You are a Senior Tactical Analyst for Indian Equities.
@@ -120,24 +121,24 @@ export const analyzeEventNarrative = async (inputs: any): Promise<{ event_analys
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
+    const model = ai.getGenerativeModel({
+        model: MODEL_NAME,
         systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            event_analysis_text: { type: Type.STRING, description: "4-8 lines max tactical narrative" },
-            tone: { type: Type.STRING }
-          },
-          required: ["event_analysis_text", "tone"]
+        generationConfig: {
+            responseMimeType: "application/json",
+                    responseSchema: {
+                      type: SchemaType.OBJECT,
+                      properties: {                event_analysis_text: { type: SchemaType.STRING, description: "4-8 lines max tactical narrative" },
+                tone: { type: SchemaType.STRING }
+              },
+              required: ["event_analysis_text", "tone"]
+            }
         }
-      }
     });
 
-    const text = response.text;
+    const response = await model.generateContent(prompt);
+
+    const text = response.response.text();
     if (!text) return null;
     return JSON.parse(text);
   } catch (error) {

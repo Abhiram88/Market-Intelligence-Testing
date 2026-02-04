@@ -17,7 +17,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # --- CONFIGURATION ---
 GEMINI_API_KEY = os.environ.get("API_KEY")
 # This should be the URL of your deployed breeze_proxy_app.py
-BREEZE_PROXY_URL = "https://maia-breeze-proxy-service-919207294606.us-central1.run.app".rstrip("/")
+BREEZE_PROXY_URL = os.environ.get("BREEZE_PROXY_URL", "https://maia-breeze-proxy-service-919207294606.us-central1.run.app").rstrip("/")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xbnzvmgawikqzxutmoea.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "sb_publishable_8TYnAzAX4s-CHAPVOpmLEA_Puqwcuwo")
 
@@ -80,7 +80,7 @@ def get_proxy_headers():
 def set_session():
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/admin/api-session",
+            f"{BREEZE_PROXY_URL}/api/breeze/admin/api-session",
             json=request.json,
             headers={"X-Proxy-Admin-Key": request.headers.get("X-Proxy-Admin-Key")}
         )
@@ -106,8 +106,7 @@ def get_quote_data(symbol, proxy_key=""):
     }
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/quotes",
-            json=payload,
+            f"{BREEZE_PROXY_URL}/api/breeze/quotes",
             headers=headers
         )
         print("--- PROXY DEBUG (get_quote_data) ---")
@@ -146,7 +145,7 @@ def get_depth():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/depth",
+            f"{BREEZE_PROXY_URL}/api/breeze/depth",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -176,7 +175,7 @@ def get_historical():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/historical",
+            f"{BREEZE_PROXY_URL}/api/breeze/historical",
             json=payload,
             headers=get_proxy_headers()
         )

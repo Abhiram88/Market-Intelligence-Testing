@@ -76,7 +76,6 @@ const calculateScoreAndRecommendation = (
   family: Reg30EventFamily, 
   extracted: any, 
   confidence: number,
-  mCapCr: number | null,
   eventDate: string
 ): { 
   impact_score: number; 
@@ -294,7 +293,7 @@ export const runReg30Analysis = async (
 
       if (aiResult) {
         onRowProgress(c.id, 'SAVING');
-        const scoring = calculateScoreAndRecommendation(c.event_family!, aiResult.extracted, aiResult.confidence, null, c.event_date);
+        const scoring = calculateScoreAndRecommendation(c.event_family!, aiResult.extracted, aiResult.confidence, c.event_date);
         
         let analysisPayload: any = {};
         if (scoring.impact_score >= 50) {
@@ -390,7 +389,7 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
   };
   const aiResult = await analyzeReg30Event(candidate);
   if (aiResult) {
-    const scoring = calculateScoreAndRecommendation(report.event_family, aiResult.extracted, aiResult.confidence, null, report.event_date);
+    const scoring = calculateScoreAndRecommendation(report.event_family, aiResult.extracted, aiResult.confidence, report.event_date);
     
     let analysisPayload: any = {};
     if (scoring.impact_score >= 50) {

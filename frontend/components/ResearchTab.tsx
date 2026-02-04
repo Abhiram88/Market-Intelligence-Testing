@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { INITIAL_RESEARCH_TASKS } from '../mockData';
 import { ResearchTask } from '../types';
-import { Database, Play, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { Database, Play, CheckCircle, Clock } from 'lucide-react';
 
 const ResearchTab: React.FC = () => {
   const [tasks, setTasks] = useState<ResearchTask[]>(INITIAL_RESEARCH_TASKS);
@@ -13,7 +13,7 @@ const ResearchTab: React.FC = () => {
     // Simulate background processing
     setTimeout(() => {
       setTasks(prev => prev.map(t => 
-        t.status === 'PENDING' ? { ...t, status: 'COMPLETED', result: 'Analysis complete. Volatility attributed to global cues.' } : t
+        t.status === 'pending' ? { ...t, status: 'completed', result: 'Analysis complete. Volatility attributed to global cues.' } : t
       ));
       setIsProcessing(false);
     }, 3000);
@@ -60,13 +60,13 @@ const ResearchTab: React.FC = () => {
                     <td className="px-6 py-4 font-medium text-slate-900">{task.date}</td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        task.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
-                        task.status === 'PROCESSING' ? 'bg-blue-100 text-blue-800' :
-                        task.status === 'FAILED' ? 'bg-red-100 text-red-800' :
+                        task.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        task.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                        task.status === 'failed' ? 'bg-red-100 text-red-800' :
                         'bg-yellow-100 text-yellow-800'
                       }`}>
-                        {task.status === 'COMPLETED' && <CheckCircle className="w-3 h-3 mr-1" />}
-                        {task.status === 'PENDING' && <Clock className="w-3 h-3 mr-1" />}
+                        {task.status === 'completed' && <CheckCircle className="w-3 h-3 mr-1" />}
+                        {task.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
                         {task.status}
                       </span>
                     </td>

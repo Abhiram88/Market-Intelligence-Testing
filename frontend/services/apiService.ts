@@ -6,9 +6,9 @@
 import { MarketLog, NewsAttribution } from '../types';
 
 // Backend API URL - defaults to localhost for local development
-const API_BASE_URL = '';
+const API_BASE_URL = 'https://maia-breeze-proxy-service-919207294606.us-central1.run.app';
 
-interface QuoteResponse {
+export interface QuoteResponse {
   last_traded_price: number;
   change: number;
   percent_change: number;
@@ -26,7 +26,7 @@ interface QuoteResponse {
   total_quantity_traded?: number;
 }
 
-interface DepthResponse {
+export interface DepthResponse {
   best_bid_price: number;
   best_bid_quantity: number;
   best_offer_price: number;
@@ -46,7 +46,7 @@ interface HistoricalBar {
  * Fetch a quote for a given stock symbol
  */
 export const fetchQuote = async (symbol: string): Promise<QuoteResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/market/quote`, {
+  const response = await fetch(`${API_BASE_URL}/breeze/quotes`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -74,7 +74,7 @@ export const fetchQuote = async (symbol: string): Promise<QuoteResponse> => {
  * Fetch market depth for a given stock symbol
  */
 export const fetchDepth = async (symbol: string): Promise<DepthResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/market/depth`, {
+  const response = await fetch(`${API_BASE_URL}/breeze/depth`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -112,7 +112,7 @@ export const fetchHistorical = async (
   fromDate: string,
   toDate: string
 ): Promise<HistoricalBar[]> => {
-  const response = await fetch(`${API_BASE_URL}/api/market/historical`, {
+  const response = await fetch(`${API_BASE_URL}/breeze/historical`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -196,7 +196,7 @@ export const analyzeStockDeepDive = async (symbol: string): Promise<NewsAttribut
  * Set the Breeze API session
  */
 export const setBreezeSession = async (apiSession: string, adminKey: string) => {
-  const response = await fetch(`${API_BASE_URL}/api/breeze/admin/api-session`, {
+  const response = await fetch(`${API_BASE_URL}/breeze/admin/api-session`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
