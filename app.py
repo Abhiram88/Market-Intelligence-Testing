@@ -80,7 +80,7 @@ def get_proxy_headers():
 def set_session():
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/admin/api-session",
+            f"{BREEZE_PROXY_URL}/api/breeze/admin/api-session",
             json=request.json,
             headers={"X-Proxy-Admin-Key": request.headers.get("X-Proxy-Admin-Key")}
         )
@@ -104,7 +104,7 @@ def get_quote():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/quotes",
+            f"{BREEZE_PROXY_URL}/api/breeze/quotes",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -128,7 +128,7 @@ def get_depth():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/depth",
+            f"{BREEZE_PROXY_URL}/api/breeze/depth",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -158,7 +158,7 @@ def get_historical():
 
     try:
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/historical",
+            f"{BREEZE_PROXY_URL}/api/breeze/historical",
             json=payload,
             headers=get_proxy_headers()
         )
@@ -170,7 +170,7 @@ def get_historical():
 def get_nifty_realtime():
     if is_indian_market_open():
         res = requests.post(
-            f"{BREEZE_PROXY_URL}/breeze/quotes",
+            f"{BREEZE_PROXY_URL}/api/breeze/quotes",
             json={"stock_code": "NIFTY", "exchange_code": "NSE", "product_type": "cash"},
             headers=get_proxy_headers()
         )
