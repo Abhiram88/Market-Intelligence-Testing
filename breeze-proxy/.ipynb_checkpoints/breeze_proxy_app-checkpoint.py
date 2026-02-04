@@ -69,17 +69,17 @@ def ensure_breeze_session():
         except Exception as e:
             return None, jsonify({"error": f"Session invalid: {e}"}), 401
     elif not client.session_key:
-        return None, jsonify({"error": "Breeze session token not set. Use /admin/api-session"}), 401
+        return None, jsonify({"error": "Breeze session token not set. Use /api/breeze/admin/api-session"}), 401
     
     return client, None, None
 
 # --- API Routes ---
 
-@app.route("/breeze/health", methods=["GET"])
+@app.route("/api/breeze/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
 
-@app.route("/breeze/admin/api-session", methods=["POST"])
+@app.route("/api/breeze/admin/api-session", methods=["POST"])
 def set_session():
     """Handshake from UI to activate the daily data pipe."""
     global DAILY_SESSION_TOKEN

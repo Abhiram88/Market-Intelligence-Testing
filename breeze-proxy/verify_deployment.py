@@ -54,10 +54,10 @@ def test_root_health_endpoint():
         return False
 
 def test_breeze_health_endpoint():
-    """Test the breeze health endpoint (/breeze/health)"""
+    """Test the breeze health endpoint (/api/breeze/health)"""
     print_header("Test 2: Breeze Health Endpoint")
     
-    url = f"{SERVICE_URL}/breeze/health"
+    url = f"{SERVICE_URL}/api/breeze/health"
     print(f"URL: {url}")
     
     try:
@@ -86,7 +86,7 @@ def test_cors_preflight():
     """Test CORS preflight OPTIONS request"""
     print_header("Test 3: CORS Preflight (OPTIONS)")
     
-    url = f"{SERVICE_URL}/breeze/quotes"
+    url = f"{SERVICE_URL}/api/breeze/quotes"
     print(f"URL: {url}")
     
     headers = {
