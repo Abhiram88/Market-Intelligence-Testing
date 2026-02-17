@@ -40,9 +40,14 @@ export const NiftyRealtimeCard: React.FC = () => {
     });
 
     socket.on('watchlist_update', (data) => {
+      console.log('Received watchlist_update:', data);
       if(data.symbol === 'NIFTY') {
         setTelemetry(prev => ({ ...prev, ...data, dataSource: 'Breeze Direct' }));
       }
+    });
+
+    socket.on('connect_error', (err) => {
+        console.log('Nifty socket connection error:', err);
     });
 
     socket.on('disconnect', () => {
@@ -52,7 +57,7 @@ export const NiftyRealtimeCard: React.FC = () => {
     return () => {
       socket.disconnect();
     };
-  }, []);
+  }, [telemetry]);
 
   const isPositive = telemetry ? telemetry.change >= 0 : false;
 
