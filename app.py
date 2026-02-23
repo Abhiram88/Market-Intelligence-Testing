@@ -11,7 +11,7 @@ from google.genai import types
 from supabase import create_client, Client
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+CORS(app, origins=["http://34.170.234.220:8082"], supports_credentials=True)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # --- CONFIGURATION ---
@@ -78,6 +78,8 @@ def get_proxy_headers():
 # --- BREEZE PROXY ENDPOINTS ---
 @app.route('/api/breeze/admin/api-session', methods=['POST', 'OPTIONS'])
 def set_session():
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
     try:
         res = requests.post(
             f"{BREEZE_PROXY_URL}/api/breeze/admin/api-session",
@@ -120,6 +122,8 @@ def get_quote_data(symbol, proxy_key=""):
 
 @app.route('/api/market/quote', methods=['POST', 'OPTIONS'])
 def get_quote():
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
     data = request.json
     symbol = data.get("symbol")
     if not symbol:
@@ -131,6 +135,8 @@ def get_quote():
 
 @app.route('/api/market/depth', methods=['POST', 'OPTIONS'])
 def get_depth():
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
     data = request.json
     symbol = data.get("symbol")
     if not symbol:
@@ -155,6 +161,8 @@ def get_depth():
 
 @app.route('/api/market/historical', methods=['POST', 'OPTIONS'])
 def get_historical():
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
     data = request.json
     symbol = data.get("symbol")
     from_date = data.get("from_date")
@@ -213,33 +221,32 @@ def get_nifty_realtime():
     return jsonify({"error": "No data available"}), 404
 
 # --- GEMINI INTELLIGENCE ENDPOINTS ---
-@app.route('/api/gemini/analyze_market_log', methods=['POST', 'OPTIONS'])
-def analyze_market():
+@app.route('/api/gemini/summarize_market_outlook', methods=['POST', 'OPTIONS'])
+def summarize_market_outlook():
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
     log = request.json
     log_date = log.get('log_date', str(get_ist_now().date()))
     direction = "upward (BULLISH)" if log.get('niftyChange', 0) >= 0 else "downward (BEARISH)"
-    
-    sys_instr = "You are a Senior Quantitative Market Strategist and Financial Journalist specializing in the Indian Equity Markets (NSE/BSE). Your goal is to perform a 'Forensic News Correlation.' You must identify the specific macro-economic or geopolitical events that caused the Nifty 50 index to move on a specific date. Do not provide generic market advice; provide specific, data-backed causal links."
-    
-    prompt = f"""Analyze the Nifty 50 market movement for {log_date}.
-TECHNICAL TELEMETRY:
-Closing Price: {log.get('niftyClose')}
-Point Change: {log.get('niftyChange')}
-Percentage Change: {log.get('niftyChangePercent')}%
-Session Trend: {direction}
 
-OBJECTIVES:
-1. Use Google Search Grounding to find the top 3-5 high-impact financial news stories published specifically on this date.
-2. Synthesize a 'Causal Narrative' (min 300 words) that explains how these news stories influenced institutional buying or selling pressure.
-3. Categorize the move (e.g., Monetary Policy, Geopolitical, Earnings).
-4. Identify the specific Affected Stocks and Affected Sectors that led the rally or decline.
+    sys_instr = "You are a Senior Equity Analyst and Financial Journalist for a top-tier publication, specializing in the Indian Equity Markets. Your task is to synthesize a compelling and insightful market summary that explains the key drivers behind the Nifty 50's performance for a given day. You must provide a clear narrative, supported by data and specific events."
 
-OUTPUT RULES:
-Return the response in STRICT JSON format with keys: headline, narrative, category, sentiment, impact_score, affected_stocks, affected_sectors."""
+    prompt = f"""Provide a comprehensive market summary for the Nifty 50 on {log_date}.
+The market closed at {log.get('niftyClose')}, with a change of {log.get('niftyChange')} points ({log.get('niftyChangePercent')}%). The session trend was {direction}.
+
+Your analysis should be a narrative of at least 300 words, explaining the 'why' behind the market's movement.
+
+Your response must be in a STRICT JSON format with the following keys:
+- "headline": A punchy, insightful headline summarizing the day's action.
+- "narrative": A detailed narrative explaining the causal factors (e.g., policy announcements, corporate earnings, global cues, sector-specific news).
+- "outlook": A brief forward-looking statement on what to expect in the near term.
+- "affected_sectors": A list of the top 3-5 sectors that were most impacted.
+- "key_stocks": A list of key stocks that were movers and shakers.
+"""
 
     try:
         response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3-pro',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=sys_instr,
@@ -253,13 +260,11 @@ Return the response in STRICT JSON format with keys: headline, narrative, catego
                 "market_log_id": log.get('id'),
                 "headline": result.get('headline'),
                 "narrative": result.get('narrative'),
-                "impact_score": result.get('impact_score'),
-                "model": "gemini-2.5-flash",
+                "outlook": result.get('outlook'),
+                "model": "gemini-3-pro",
                 "impact_json": {
-                    "stocks": result.get('affected_stocks'),
+                    "stocks": result.get('key_stocks'),
                     "sectors": result.get('affected_sectors'),
-                    "category": result.get('category'),
-                    "sentiment": result.get('sentiment')
                 }
             }
             supabase.table('news_attribution').upsert(payload, on_conflict='market_log_id').execute()

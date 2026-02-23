@@ -20,6 +20,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "types.ts", "mockData.ts", "services"],
+  "include": ["src", "types.ts", "services"],
 
 }

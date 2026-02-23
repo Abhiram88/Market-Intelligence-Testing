@@ -141,10 +141,10 @@ export const fetchHistorical = async (
 };
 
 /**
- * Analyze market radar using Gemini AI
+ * Summarize market outlook using Gemini AI
  */
-export const analyzeMarketRadar = async (log: MarketLog): Promise<NewsAttribution> => {
-  const response = await fetch(`${API_BASE_URL}/api/gemini/analyze_market_log`, {
+export const summarizeMarketOutlook = async (log: MarketLog): Promise<NewsAttribution> => {
+  const response = await fetch(`${API_BASE_URL}/api/gemini/summarize_market_outlook`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'

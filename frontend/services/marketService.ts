@@ -6,23 +6,7 @@ import { MarketLog } from '../types';
 
 
 
-// --- MOCK DATA ---
-const generateMockNiftyData = (): BreezeQuote => {
-  const last = 22000 + Math.random() * 500 - 250;
-  const prevClose = 21950;
-  const change = last - prevClose;
-  const percentChange = (change / prevClose) * 100;
-  return {
-    last_traded_price: last,
-    change: change,
-    percent_change: percentChange,
-    open: 21980,
-    high: last + Math.random() * 50,
-    low: last - Math.random() * 50,
-    previous_close: prevClose,
-    volume: 300_000_000 + Math.random() * 50_000_000,
-  };
-};
+
 
 // --- STATE & THROTTLING ---
 let lastApiCallTimestamp = 0;
@@ -56,10 +40,7 @@ export const getMarketSessionStatus = () => {
 
 // --- CORE LOGIC ---
 export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> => {
-  // 1. Simulation Mode
-  if (localStorage.getItem('breeze_simulation_mode') === 'true') {
-    return { ...generateMockNiftyData(), dataSource: 'Simulation' };
-  }
+  
 
   const { isOpen } = getMarketSessionStatus();
 

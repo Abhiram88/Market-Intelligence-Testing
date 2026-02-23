@@ -24,6 +24,16 @@ _secret_cache = {}
 breeze_client = None
 DAILY_SESSION_TOKEN = None
 
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({
+        "message": "MAIA Breeze Proxy is Running",
+        "endpoints": [
+            "/api/breeze/health",
+            "/api/breeze/quotes"
+        ]
+    }), 200
+
 def get_secret(secret_name):
     """Fetch secrets from environment variables with local caching."""
     if secret_name in _secret_cache:
@@ -87,9 +97,11 @@ def root_health():
 def health():
     return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
 
-@app.route("/api/breeze/admin/api-session", methods=["POST"])
+@app.route("/api/breeze/admin/api-session", methods=["POST", "OPTIONS"])
 def set_session():
     """Activate the daily session token."""
+    if request.method == "OPTIONS":
+        return "", 200
     global DAILY_SESSION_TOKEN
     data = request.get_json() or {}
     api_session = data.get("api_session")

@@ -1,63 +1,20 @@
 
-import React, { useState, useEffect } from 'react';
-import { fetchRealtimeMarketTelemetry, MarketTelemetry, getMarketSessionStatus } from '../services/marketService';
+import React from 'react';
+import { MarketTelemetry, getMarketSessionStatus } from '../services/marketService';
 import { Activity, Zap, AlertTriangle } from 'lucide-react';
 
-import { io } from 'socket.io-client';
+interface NiftyRealtimeCardProps {
+  telemetry: MarketTelemetry | null;
+  isLoading: boolean;
+}
 
 const formatVolume = (vol: number) => {
   if (!vol) return '--';
   return `${(vol / 1000000).toFixed(2)}M`;
 };
 
-export const NiftyRealtimeCard: React.FC = () => {
-  const [telemetry, setTelemetry] = useState<MarketTelemetry | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const data = await fetchRealtimeMarketTelemetry();
-        setTelemetry(data);
-      } catch (e: any) {
-        // Error is not used, so we can ignore it
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData(); // Initial fetch
-
-    const socket = io("https://maia-breeze-proxy-service-919207294606.us-central1.run.app");
-
-    socket.on('connect', () => {
-        console.log('Nifty socket connected');
-        const proxy_key = localStorage.getItem('breeze_proxy_key') || '';
-        socket.emit('subscribe_to_watchlist', {
-            stocks: ['NIFTY'],
-            proxy_key: proxy_key
-        });
-    });
-
-    socket.on('watchlist_update', (data) => {
-      console.log('Received watchlist_update:', data);
-      if(data.symbol === 'NIFTY') {
-        setTelemetry(prev => ({ ...prev, ...data, dataSource: 'Breeze Direct' }));
-      }
-    });
-
-    socket.on('connect_error', (err) => {
-        console.log('Nifty socket connection error:', err);
-    });
-
-    socket.on('disconnect', () => {
-        console.log('Nifty socket disconnected');
-    });
-
-    return () => {
-      socket.disconnect();
-    };
-  }, [telemetry]);
+export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry, isLoading }) => {
+  
 
   const isPositive = telemetry ? telemetry.change >= 0 : false;
 

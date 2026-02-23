@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
-import { INITIAL_RESEARCH_TASKS } from '../mockData';
 import { ResearchTask } from '../types';
 import { Database, Play, CheckCircle, Clock } from 'lucide-react';
 
 const ResearchTab: React.FC = () => {
-  const [tasks, setTasks] = useState<ResearchTask[]>(INITIAL_RESEARCH_TASKS);
+  const [tasks, setTasks] = useState<ResearchTask[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const runDeepResearch = () => {
