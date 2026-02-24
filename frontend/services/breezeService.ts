@@ -173,7 +173,7 @@ export const fetchBreezeQuote = async (stockCode: string): Promise<BreezeQuote> 
 export const normalizeBreezeQuoteFromRow = (row: Record<string, unknown>, stockCode?: string): BreezeQuote => {
   const ltp = parseFloat(String(row.ltp ?? row.last_traded_price ?? 0));
   const prevClose = parseFloat(String(row.previous_close ?? 0));
-  const changeVal = parseFloat(String(row.change ?? (ltp - prevClose) ?? 0));
+  const changeVal = parseFloat(String(row.change ?? (ltp - prevClose)));
   const pctChange = parseFloat(String(row.ltp_percent_change ?? row.chng_per ?? 0));
 
   return {
