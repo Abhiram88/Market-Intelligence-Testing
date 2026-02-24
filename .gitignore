@@ -1,5 +1,7 @@
-# Environment variables
-.env*
+# Environment variables (keep .env.example so others know required vars)
+.env
+.env.*
+!.env.example
 
 # Python
 __pycache__/

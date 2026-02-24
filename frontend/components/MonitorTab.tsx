@@ -3,11 +3,13 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from './ui/Card';
 import { summarizeMarketOutlook, analyzeStockDeepDive, fetchQuote, fetchDepth } from '../services/apiService';
 import { getMarketSessionStatus, fetchRealtimeMarketTelemetry, MarketTelemetry } from '../services/marketService';
+import { normalizeBreezeQuoteFromRow } from '../services/breezeService';
 import { NewsAttribution, MarketLog, LiquidityMetrics } from '../types';
 import { Search, Zap, Loader2, Info, AlertCircle } from 'lucide-react';
 import { PriorityStocksCard } from './PriorityStocksCard';
 import { NiftyRealtimeCard } from './NiftyRealtimeCard';
 import { io } from 'socket.io-client';
+import { getProxyBaseUrl } from '../services/breezeService';
 
 const MonitorTab: React.FC = () => {
   // Intelligence Section State
@@ -40,7 +42,7 @@ const MonitorTab: React.FC = () => {
 
     fetchData(); // Initial fetch
 
-    const socket = io("https://maia-breeze-proxy-service-919207294606.us-central1.run.app");
+    const socket = io(getProxyBaseUrl());
 
     socket.on('connect', () => {
         console.log('Nifty socket connected');
@@ -51,11 +53,11 @@ const MonitorTab: React.FC = () => {
         });
     });
 
-    socket.on('watchlist_update', (data) => {
-      console.log('Received watchlist_update:', data);
-      if(data.symbol === 'NIFTY') {
-        setTelemetry(prev => ({ ...prev, ...data, dataSource: 'Breeze Direct' }));
-      }
+    socket.on('watchlist_update', (data: Record<string, unknown>) => {
+      if ((data.symbol as string) !== 'NIFTY') return;
+      if (!getMarketSessionStatus().isOpen) return;
+      const normalized = normalizeBreezeQuoteFromRow(data, 'NIFTY');
+      setTelemetry(prev => ({ ...normalized, dataSource: 'Breeze Direct' as const, ...(prev?.errorType && { errorType: prev.errorType }) }));
     });
 
     socket.on('connect_error', (err) => {

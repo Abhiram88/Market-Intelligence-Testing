@@ -3,7 +3,8 @@
  */
 import { supabase } from '../lib/supabase';
 
-const DEFAULT_PROXY_URL = "https://maia-breeze-proxy-service-919207294606.us-central1.run.app";
+const DEFAULT_PROXY_URL =
+  import.meta.env.VITE_PROXY_URL || "https://maia-breeze-proxy-service-919207294606.us-central1.run.app";
 
 const HARDCODED_MAPPINGS: Record<string, string> = {
   'AHLUCONT': 'AHLCON',
@@ -49,19 +50,17 @@ export interface HistoricalBar {
   volume: number;
 }
 
-const resolveApiUrl = (endpoint: string) => {
-  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+export const getProxyBaseUrl = () => {
   let base = localStorage.getItem('breeze_proxy_url') || DEFAULT_PROXY_URL;
-  
-  if (base) {
-    base = base.trim().replace(/\/$/, "");
-    if (!base.startsWith('http')) {
-      base = `https://${base}`;
-    }
-    return `${base}${path}`;
-  }
+  base = (base || DEFAULT_PROXY_URL).trim().replace(/\/$/, "");
+  if (base && !base.startsWith('http')) base = `https://${base}`;
+  return base || DEFAULT_PROXY_URL;
+};
 
-  return `${DEFAULT_PROXY_URL}${path}`;
+export const resolveApiUrl = (endpoint: string) => {
+  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const base = getProxyBaseUrl();
+  return `${base}${path}`;
 };
 
 export const checkProxyHealth = async () => {
@@ -164,25 +163,33 @@ export const fetchBreezeQuote = async (stockCode: string): Promise<BreezeQuote> 
   
   if (!row) throw new Error(`No quote data for ${stockCode}`);
 
-  const ltp = parseFloat(row.ltp || row.last_traded_price || 0);
-  const prevClose = parseFloat(row.previous_close || 0);
-  const changeVal = parseFloat(row.change || (ltp - prevClose) || 0);
-  const pctChange = parseFloat(row.ltp_percent_change || row.chng_per || 0);
+  return normalizeBreezeQuoteFromRow(row, stockCode);
+};
+
+/**
+ * Normalize raw Breeze API quote row (e.g. from REST or Socket.IO watchlist_update) to BreezeQuote.
+ * Use this for socket payloads so the Nifty card always gets consistent field names.
+ */
+export const normalizeBreezeQuoteFromRow = (row: Record<string, unknown>, stockCode?: string): BreezeQuote => {
+  const ltp = parseFloat(String(row.ltp ?? row.last_traded_price ?? 0));
+  const prevClose = parseFloat(String(row.previous_close ?? 0));
+  const changeVal = parseFloat(String(row.change ?? (ltp - prevClose) ?? 0));
+  const pctChange = parseFloat(String(row.ltp_percent_change ?? row.chng_per ?? 0));
 
   return {
     last_traded_price: ltp,
     change: changeVal,
     percent_change: pctChange,
-    open: parseFloat(row.open || 0),
-    high: parseFloat(row.high || 0),
-    low: parseFloat(row.low || 0),
+    open: parseFloat(String(row.open ?? 0)),
+    high: parseFloat(String(row.high ?? 0)),
+    low: parseFloat(String(row.low ?? 0)),
     previous_close: prevClose,
-    volume: parseFloat(row.total_volume || row.volume || 0),
+    volume: parseFloat(String(row.total_volume ?? row.volume ?? 0)),
     stock_code: stockCode,
-    best_bid_price: parseFloat(row.best_bid_price || 0),
-    best_bid_quantity: parseFloat(row.best_bid_quantity || 0),
-    best_offer_price: parseFloat(row.best_offer_price || 0),
-    best_offer_quantity: parseFloat(row.best_offer_quantity || 0)
+    best_bid_price: parseFloat(String(row.best_bid_price ?? 0)),
+    best_bid_quantity: parseFloat(String(row.best_bid_quantity ?? 0)),
+    best_offer_price: parseFloat(String(row.best_offer_price ?? 0)),
+    best_offer_quantity: parseFloat(String(row.best_offer_quantity ?? 0))
   };
 };
 

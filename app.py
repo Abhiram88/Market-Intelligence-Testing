@@ -3,6 +3,7 @@ import json
 import datetime
 import requests
 import pytz
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
@@ -10,16 +11,24 @@ from google import genai
 from google.genai import types
 from supabase import create_client, Client
 
-app = Flask(__name__)
-CORS(app, origins=["http://34.170.234.220:8082"], supports_credentials=True)
-socketio = SocketIO(app, cors_allowed_origins="*")
+load_dotenv()
 
-# --- CONFIGURATION ---
-GEMINI_API_KEY = os.environ.get("API_KEY")
-# This should be the URL of your deployed breeze_proxy_app.py
-BREEZE_PROXY_URL = os.environ.get("BREEZE_PROXY_URL", "https://maia-breeze-proxy-service-919207294606.us-central1.run.app").rstrip("/")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xbnzvmgawikqzxutmoea.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "sb_publishable_8TYnAzAX4s-CHAPVOpmLEA_Puqwcuwo")
+app = Flask(__name__)
+# CORS: set CORS_ORIGINS env (comma-separated) or use defaults (local + legacy Vertex IP)
+_default_origins = [
+    "http://localhost:8082", "http://localhost:5173",
+    "http://127.0.0.1:8082", "http://127.0.0.1:5173",
+    "http://34.170.234.220:8082",
+]
+CORS_ORIGINS = [o.strip() for o in (os.environ.get("CORS_ORIGINS") or "").split(",") if o.strip()] or _default_origins
+CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
+
+# --- CONFIGURATION (from .env or environment; no hardcoded secrets) ---
+GEMINI_API_KEY = os.environ.get("API_KEY", "").strip()
+BREEZE_PROXY_URL = os.environ.get("BREEZE_PROXY_URL", "").strip().rstrip("/")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
 # --- INITIALIZATION ---
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)

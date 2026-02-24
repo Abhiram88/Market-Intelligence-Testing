@@ -4,9 +4,7 @@
  */
 
 import { MarketLog, NewsAttribution } from '../types';
-
-// Backend API URL - defaults to localhost for local development
-const API_BASE_URL = 'https://maia-breeze-proxy-service-919207294606.us-central1.run.app';
+import { getProxyBaseUrl, getStockMappings, normalizeBreezeQuoteFromRow } from './breezeService';
 
 export interface QuoteResponse {
   last_traded_price: number;
@@ -42,17 +40,27 @@ interface HistoricalBar {
   volume: number;
 }
 
+const resolveStockCode = async (symbol: string) => {
+  const mappings = await getStockMappings([symbol]);
+  return mappings[symbol] || symbol;
+};
+
 /**
  * Fetch a quote for a given stock symbol
  */
 export const fetchQuote = async (symbol: string): Promise<QuoteResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/breeze/quotes`, {
+  const stock_code = await resolveStockCode(symbol);
+  const response = await fetch(`${getProxyBaseUrl()}/api/breeze/quotes`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Proxy-Key': localStorage.getItem('breeze_proxy_key') || ''
     },
-    body: JSON.stringify({ symbol })
+    body: JSON.stringify({
+      stock_code,
+      exchange_code: 'NSE',
+      product_type: 'cash'
+    })
   });
 
   if (!response.ok) {
@@ -62,25 +70,30 @@ export const fetchQuote = async (symbol: string): Promise<QuoteResponse> => {
 
   const data = await response.json();
   
-  // Handle both direct response and nested Success object
-  if (data.Success) {
-    return data.Success;
-  }
-  
-  return data;
+  const row = Array.isArray(data.Success)
+    ? data.Success.find((x: any) => x.exchange_code === "NSE" || x.stock_code === stock_code)
+    : (data.Success?.[0] || data.Success);
+  if (!row) throw new Error(`No quote data for ${symbol}`);
+
+  return normalizeBreezeQuoteFromRow(row, stock_code);
 };
 
 /**
  * Fetch market depth for a given stock symbol
  */
 export const fetchDepth = async (symbol: string): Promise<DepthResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/breeze/depth`, {
+  const stock_code = await resolveStockCode(symbol);
+  const response = await fetch(`${getProxyBaseUrl()}/api/breeze/depth`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Proxy-Key': localStorage.getItem('breeze_proxy_key') || ''
     },
-    body: JSON.stringify({ symbol })
+    body: JSON.stringify({
+      stock_code,
+      exchange_code: 'NSE',
+      product_type: 'cash'
+    })
   });
 
   if (!response.ok) {
@@ -112,16 +125,20 @@ export const fetchHistorical = async (
   fromDate: string,
   toDate: string
 ): Promise<HistoricalBar[]> => {
-  const response = await fetch(`${API_BASE_URL}/api/breeze/historical`, {
+  const stock_code = await resolveStockCode(symbol);
+  const response = await fetch(`${getProxyBaseUrl()}/api/breeze/historical`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Proxy-Key': localStorage.getItem('breeze_proxy_key') || ''
     },
     body: JSON.stringify({
-      symbol,
+      stock_code,
+      exchange_code: 'NSE',
+      product_type: 'cash',
       from_date: fromDate,
-      to_date: toDate
+      to_date: toDate,
+      interval: '1day'
     })
   });
 
@@ -144,7 +161,7 @@ export const fetchHistorical = async (
  * Summarize market outlook using Gemini AI
  */
 export const summarizeMarketOutlook = async (log: MarketLog): Promise<NewsAttribution> => {
-  const response = await fetch(`${API_BASE_URL}/api/gemini/summarize_market_outlook`, {
+  const response = await fetch(`${getProxyBaseUrl()}/api/gemini/summarize_market_outlook`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -170,7 +187,7 @@ export const summarizeMarketOutlook = async (log: MarketLog): Promise<NewsAttrib
  * Perform deep dive analysis on a stock using Gemini AI
  */
 export const analyzeStockDeepDive = async (symbol: string): Promise<NewsAttribution> => {
-  const response = await fetch(`${API_BASE_URL}/api/gemini/stock-deep-dive`, {
+  const response = await fetch(`${getProxyBaseUrl()}/api/gemini/stock-deep-dive`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -196,7 +213,7 @@ export const analyzeStockDeepDive = async (symbol: string): Promise<NewsAttribut
  * Set the Breeze API session
  */
 export const setBreezeSession = async (apiSession: string, adminKey: string) => {
-  const response = await fetch(`${API_BASE_URL}/api/breeze/admin/api-session`, {
+  const response = await fetch(`${getProxyBaseUrl()}/api/breeze/admin/api-session`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

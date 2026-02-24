@@ -20,6 +20,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "types.ts", "services"],
+  "include": ["src", "components", "lib", "types.ts", "services"]
 
 }
