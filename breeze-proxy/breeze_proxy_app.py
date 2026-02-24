@@ -17,16 +17,10 @@ from supabase import create_client, Client
 load_dotenv()
 
 app = Flask(__name__)
-# CORS: set CORS_ORIGINS env (comma-separated) or use defaults (local + legacy Vertex IP)
-_default_origins = [
-    "http://localhost:8082", "http://localhost:5173",
-    "http://127.0.0.1:8082", "http://127.0.0.1:5173",
-    "http://34.170.234.220:8082",
-]
-_cors_origins_raw = os.environ.get("CORS_ORIGINS", "")
-CORS_ORIGINS = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()] or _default_origins
-CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
-socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
+# Open CORS for all origins so Cloud Run proxy can serve any frontend (Netlify, localhost, etc.)
+# You can tighten this later by restricting origins if needed.
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
