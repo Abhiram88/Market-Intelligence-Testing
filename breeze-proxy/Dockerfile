@@ -13,8 +13,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code into the container
 COPY breeze_proxy_app.py .
 
+# Copy config file if present (secrets loaded at runtime)
+COPY config.yam[l] .
+
 # Document the port that Cloud Run will use
 EXPOSE 8080
 
 # Run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:${PORT}", "--workers", "1", "--worker-class", "eventlet", "breeze_proxy_app:app"]
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --worker-class eventlet breeze_proxy_app:app

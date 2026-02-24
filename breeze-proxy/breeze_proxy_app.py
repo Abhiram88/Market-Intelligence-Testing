@@ -9,12 +9,24 @@ from dotenv import load_dotenv
 import json
 import datetime
 import pytz
+import yaml
 from google import genai
 from google.genai import types
 from supabase import create_client, Client
 
 # Load environment variables from .env file for local testing
 load_dotenv()
+
+# Load YAML config file (if present) as a fallback for secrets
+_yaml_config = {}
+_CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.yaml")
+if os.path.isfile(_CONFIG_PATH):
+    try:
+        with open(_CONFIG_PATH, "r") as f:
+            _yaml_config = {k: v for k, v in (yaml.safe_load(f) or {}).items() if v}
+        logging.info(f"Loaded config from {_CONFIG_PATH}")
+    except Exception as e:
+        logging.warning(f"Failed to load {_CONFIG_PATH}: {e}")
 
 app = Flask(__name__)
 # Allow all origins; do not use supports_credentials with "*" (browser forbids it).
@@ -59,17 +71,19 @@ def home():
     }), 200
 
 def get_secret(secret_name):
-    """Fetch secrets from environment variables with local caching."""
+    """Fetch secrets from environment variables or YAML config file, with local caching."""
     if secret_name in _secret_cache:
         return _secret_cache[secret_name]
     
     val = os.environ.get(secret_name)
+    if val is None:
+        val = _yaml_config.get(secret_name)
     
     if val:
         logger.info(f"Loaded secret '{secret_name}' successfully.")
         _secret_cache[secret_name] = val
     else:
-        logger.error(f"Failed to find secret '{secret_name}' in environment.")
+        logger.error(f"Failed to find secret '{secret_name}' in environment or config file.")
     
     return val
 
@@ -98,7 +112,7 @@ def initialize_ai_clients():
             if not gemini_api_key:
                 logger.error("GEMINI_API_KEY is missing!")
             else:
-                ai_client = genai.Client(api_key=gemini_api_key, vertexai=True)
+                ai_client = genai.Client(api_key=gemini_api_key)
                 logger.info("Gemini AI client initialized.")
         except Exception as e:
             logger.error(f"Gemini AI client initialization error: {e}")
