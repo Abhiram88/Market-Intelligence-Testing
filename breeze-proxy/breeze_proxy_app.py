@@ -112,7 +112,7 @@ def initialize_ai_clients():
             if not gemini_api_key:
                 logger.error("GEMINI_API_KEY is missing!")
             else:
-                ai_client = genai.Client(api_key=gemini_api_key, vertexai=True)
+                ai_client = genai.Client(api_key=gemini_api_key)
                 logger.info("Gemini AI client initialized.")
         except Exception as e:
             logger.error(f"Gemini AI client initialization error: {e}")
