@@ -19,6 +19,7 @@ _default_origins = [
     "http://localhost:8082", "http://localhost:5173",
     "http://127.0.0.1:8082", "http://127.0.0.1:5173",
     "http://34.170.234.220:8082",
+    "https://marketattribution.netlify.app",
 ]
 CORS_ORIGINS = [o.strip() for o in (os.environ.get("CORS_ORIGINS") or "").split(",") if o.strip()] or _default_origins
 CORS(app, origins=CORS_ORIGINS, supports_credentials=True)

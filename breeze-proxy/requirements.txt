@@ -9,7 +9,7 @@ Flask-SocketIO
 eventlet
 python-engineio
 python-socketio
-google-generativeai
+google-genai
 pytz
 supabase
 gevent
