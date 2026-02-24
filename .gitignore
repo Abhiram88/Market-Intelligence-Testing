@@ -10,3 +10,6 @@ __pycache__/
 # Node.js
 /frontend/node_modules
 /frontend/dist
+
+# Proxy config (contains secrets – keep config.example.yaml for reference)
+breeze-proxy/config.yaml

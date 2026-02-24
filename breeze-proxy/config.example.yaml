@@ -1,0 +1,7 @@
+# Copy to config.yaml and fill in values. Do not commit config.yaml.
+BREEZE_API_KEY: ""
+BREEZE_API_SECRET: ""
+BREEZE_PROXY_ADMIN_KEY: ""
+GEMINI_API_KEY: ""
+SUPABASE_URL: ""
+SUPABASE_KEY: ""

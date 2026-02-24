@@ -11,6 +11,7 @@ python-engineio
 python-socketio
 google-genai
 pytz
+pyyaml
 supabase
 gevent
 gevent-websocket
