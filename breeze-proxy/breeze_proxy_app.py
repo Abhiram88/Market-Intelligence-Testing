@@ -17,10 +17,21 @@ from supabase import create_client, Client
 load_dotenv()
 
 app = Flask(__name__)
-# Open CORS for all origins so Cloud Run proxy can serve any frontend (Netlify, localhost, etc.)
-# You can tighten this later by restricting origins if needed.
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+# Allow all origins; do not use supports_credentials with "*" (browser forbids it).
+CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "X-Proxy-Key", "X-Proxy-Admin-Key"]}})
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+
+@app.after_request
+def add_cors_headers(response):
+    """Ensure every response has CORS headers so preflight and errors still allow the frontend."""
+    origin = request.origin if request.origin else "*"
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Proxy-Key, X-Proxy-Admin-Key"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    return response
+
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
