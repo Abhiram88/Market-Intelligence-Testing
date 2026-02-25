@@ -76,7 +76,7 @@ export const PriorityStocksCard: React.FC = () => {
 
     for (let i = 0; i < stocks.length; i++) {
       const stock = stocks[i];
-      await new Promise(r => setTimeout(r, 300)); // Stagger
+      await new Promise(r => setTimeout(r, 80)); // Short stagger to avoid rate limits; socket is primary for real-time
 
       try {
         let quote: QuoteResponse | null = null;
@@ -200,10 +200,12 @@ export const PriorityStocksCard: React.FC = () => {
 
   useEffect(() => {
     if (priorityStocks.length === 0) return;
-    // Keep a REST fallback refresh in case socket updates drop.
+    const marketStatus = getMarketSessionStatus();
+    // Shorter interval when market open so Vol Today / depth stay fresh if socket lags
+    const intervalMs = marketStatus.isOpen ? 12000 : 30000;
     const poller = window.setInterval(() => {
       updateQuotesBatch(priorityStocks);
-    }, 20000);
+    }, intervalMs);
 
     return () => window.clearInterval(poller);
   }, [priorityStocks, updateQuotesBatch]);
@@ -376,7 +378,7 @@ export const PriorityStocksCard: React.FC = () => {
                             <div className="grid grid-cols-4 gap-4 pt-4 border-t border-slate-50">
                               <div className="flex flex-col gap-1.5">
                                 <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Vol Today</p>
-                                <p className="text-[9px] font-black text-slate-900">{(quote?.total_quantity_traded ? ((quote.total_quantity_traded) / 1000000).toFixed(2) : '—')}M</p>
+                                <p className="text-[9px] font-black text-slate-900">{((quote?.total_quantity_traded ?? quote?.volume ?? 0) > 0 ? (((quote?.total_quantity_traded ?? quote?.volume) ?? 0) / 1000000).toFixed(2) : '—')}M</p>
                               </div>
                               <div className="flex flex-col gap-1.5 text-center">
                                 <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Vol Ratio</p>

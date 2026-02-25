@@ -171,10 +171,12 @@ export const fetchBreezeQuote = async (stockCode: string): Promise<BreezeQuote> 
  * Use this for socket payloads so the Nifty card always gets consistent field names.
  */
 export const normalizeBreezeQuoteFromRow = (row: Record<string, unknown>, stockCode?: string): BreezeQuote => {
-  const ltp = parseFloat(String(row.ltp ?? row.last_traded_price ?? 0));
-  const prevClose = parseFloat(String(row.previous_close ?? 0));
+  const ltp = parseFloat(String(row.ltp ?? row.last_traded_price ?? row.last ?? 0));
+  const prevClose = parseFloat(String(row.previous_close ?? row.close ?? 0));
   const changeVal = parseFloat(String(row.change ?? (ltp - prevClose)));
   const pctChange = parseFloat(String(row.percent_change ?? row.ltp_percent_change ?? row.chng_per ?? 0));
+  // Breeze REST uses total_quantity_traded; websocket uses ttq. Ensure Vol Today / Vol Ratio get real-time data.
+  const vol = parseFloat(String(row.total_quantity_traded ?? row.ttq ?? row.total_volume ?? row.volume ?? 0));
 
   return {
     last_traded_price: ltp,
@@ -184,12 +186,12 @@ export const normalizeBreezeQuoteFromRow = (row: Record<string, unknown>, stockC
     high: parseFloat(String(row.high ?? 0)),
     low: parseFloat(String(row.low ?? 0)),
     previous_close: prevClose,
-    volume: parseFloat(String(row.total_volume ?? row.volume ?? 0)),
+    volume: vol,
     stock_code: stockCode,
-    best_bid_price: parseFloat(String(row.best_bid_price ?? 0)),
-    best_bid_quantity: parseFloat(String(row.best_bid_quantity ?? 0)),
-    best_offer_price: parseFloat(String(row.best_offer_price ?? 0)),
-    best_offer_quantity: parseFloat(String(row.best_offer_quantity ?? 0))
+    best_bid_price: parseFloat(String(row.best_bid_price ?? row.bPrice ?? 0)),
+    best_bid_quantity: parseFloat(String(row.best_bid_quantity ?? row.bQty ?? 0)),
+    best_offer_price: parseFloat(String(row.best_offer_price ?? row.sPrice ?? 0)),
+    best_offer_quantity: parseFloat(String(row.best_offer_quantity ?? row.sQty ?? 0))
   };
 };
 

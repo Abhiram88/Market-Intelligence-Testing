@@ -43,7 +43,7 @@ const MonitorTab: React.FC = () => {
     };
 
     fetchData(); // Initial fetch
-    const fallbackInterval = window.setInterval(fetchData, 15000);
+    const fallbackInterval = window.setInterval(fetchData, 10000);
 
     const socket = io(getProxyBaseUrl(), {
       transports: ['websocket', 'polling'],
@@ -65,7 +65,6 @@ const MonitorTab: React.FC = () => {
     socket.on('watchlist_update', (data: Record<string, unknown>) => {
       const symbol = String(data.symbol || '').toUpperCase();
       if (symbol !== 'NIFTY' && symbol !== 'NIFTY 50') return;
-      if (!getMarketSessionStatus().isOpen) return;
       const normalized = normalizeBreezeQuoteFromRow(data, 'NIFTY');
       setTelemetry({
         ...normalized,
@@ -141,15 +140,17 @@ const MonitorTab: React.FC = () => {
       const mid = (bid + ask) / 2;
       const spread = mid > 0 ? ((ask - bid) / mid) * 100 : null;
       
+      const bidQty = depth.best_bid_quantity || 0;
+      const askQty = depth.best_offer_quantity || 0;
       setStockMetrics({
         spread_pct: spread,
-        depth_ratio: (depth.best_bid_quantity || 0) + 1 / (depth.best_offer_quantity || 0) + 1,
+        depth_ratio: (bidQty + 1) / (askQty + 1),
         vol_ratio: null,
         regime: 'NEUTRAL',
         execution_style: spread && spread < 0.15 ? 'OK FOR MARKET' : 'LIMIT ONLY',
         bid, ask, 
-        bidQty: depth.best_bid_quantity || 0, 
-        askQty: depth.best_offer_quantity || 0,
+        bidQty, 
+        askQty,
         avg_vol_20d: null
       });
 

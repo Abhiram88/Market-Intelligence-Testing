@@ -273,14 +273,20 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
 
 def get_gemini_model_candidates():
     """
-    Ordered fallback list.
-    Keep flash first for availability/latency; upgrade to pro when available.
+    Ordered fallback list for us-central1 and other regions.
+    Try 2.5 first, then 2.0, then 1.5 so at least one model is available.
     """
     raw = get_secret("GEMINI_MODELS") or os.environ.get("GEMINI_MODELS", "")
     configured = [m.strip() for m in raw.split(",") if m and m.strip()]
     if configured:
         return configured
-    return ["gemini-2.5-flash", "gemini-2.5-pro"]
+    return [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    ]
 
 
 def generate_with_model_fallback(prompt, sys_instr):
@@ -538,8 +544,10 @@ def analyze_stock():
     if not ai_client:
         return jsonify({"error": "Gemini AI client not initialized"}), 500
 
-    data = request.json
-    symbol = data.get('symbol')
+    data = request.get_json(silent=True) or {}
+    symbol = (data.get('symbol') or '').strip().upper()
+    if not symbol:
+        return jsonify({"error": "Missing required field: symbol"}), 400
     date = data.get('date', str(get_ist_now().date()))
 
     sys_instr = (
@@ -564,7 +572,21 @@ Return the response in STRICT JSON format with keys: headline, narrative, catego
         result = extract_json(response.text)
         return jsonify(result) if result else jsonify({"error": "Failed to parse AI response"}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.warning(f"Stock deep-dive with tools failed: {e}. Retrying without Google Search.")
+        for model_name in get_gemini_model_candidates():
+            try:
+                response = ai_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(system_instruction=sys_instr),
+                )
+                result = extract_json(response.text)
+                if result:
+                    return jsonify(result)
+            except Exception as retry_e:
+                logger.warning(f"Stock deep-dive without tools ({model_name}) failed: {retry_e}")
+                continue
+        return jsonify({"error": f"Equity deep dive failed. Last error: {e}"}), 500
 
 
 # ─────────────────────────────────────────────
