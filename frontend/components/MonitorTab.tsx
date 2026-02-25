@@ -43,7 +43,7 @@ const MonitorTab: React.FC = () => {
     };
 
     fetchData(); // Initial fetch
-    const fallbackInterval = window.setInterval(fetchData, 10000);
+    const fallbackInterval = window.setInterval(fetchData, 3000);
 
     const socket = io(getProxyBaseUrl(), {
       transports: ['websocket', 'polling'],

@@ -46,12 +46,8 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
 
   // 2. Market Open Strategy
   if (isOpen) {
-    // Throttle API calls to 1 per second
     const now = Date.now();
-    if (now - lastApiCallTimestamp < 1000) {
-      // Return a placeholder or last known value to prevent UI flicker
-      // This part depends on how the calling component manages state.
-      // For now, we'll throw an error to signal the poll should be skipped.
+    if (now - lastApiCallTimestamp < 2000) {
       throw new Error('Polling too frequently');
     }
     lastApiCallTimestamp = now;
@@ -84,12 +80,10 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
 
     } catch (error: any) {
       consecutiveApiFails++;
-      if (consecutiveApiFails >= 3) {
-        // Fallback to DB
+      if (consecutiveApiFails >= 5) {
         const lastKnown = await fetchLastKnownNiftyClose();
         return { ...lastKnown, dataSource: 'Cache', errorType: 'network' };
       }
-      // Distinguish between token/auth errors and general network issues
       const errorType = error.message.includes('session') ? 'token' : 'network';
       throw new Error(errorType);
     }

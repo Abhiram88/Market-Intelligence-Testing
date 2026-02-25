@@ -196,16 +196,13 @@ export const analyzeStockDeepDive = async (symbol: string): Promise<NewsAttribut
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to analyze stock' }));
-    throw new Error(error.message || `Failed to perform deep dive on ${symbol}`);
+    const errBody = await response.json().catch(() => ({}));
+    const msg = errBody?.error || errBody?.message || response.statusText || `Deep dive failed (${response.status})`;
+    throw new Error(msg);
   }
 
   const data = await response.json();
-  
-  if (data.error) {
-    throw new Error(data.error);
-  }
-  
+  if (data?.error) throw new Error(data.error);
   return data;
 };
 

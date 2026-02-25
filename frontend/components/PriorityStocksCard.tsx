@@ -102,16 +102,22 @@ export const PriorityStocksCard: React.FC = () => {
         }
 
         if (quote) {
-          supabase
-            .from('priority_stocks')
-            .update({
-              last_price: quote.last_traded_price || quote.ltp,
-              change_val: quote.change,
-              change_percent: quote.percent_change || quote.ltp_percent_change,
-              last_updated: new Date().toISOString()
-            })
-            .eq('symbol', stock.symbol)
-            .then(); 
+          const ltp = quote.last_traded_price ?? quote.ltp;
+          const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+          const payload: Record<string, number | string> = {};
+          if (ltp != null && Number.isFinite(ltp)) payload.last_price = ltp;
+          const cv = num(quote.change); if (cv != null) payload.change_val = cv;
+          const cp = num(quote.percent_change ?? quote.ltp_percent_change); if (cp != null) payload.change_percent = cp;
+          payload.last_updated = new Date().toISOString();
+          if (Object.keys(payload).length > 1) {
+            supabase
+              .from('priority_stocks')
+              .update(payload)
+              .eq('symbol', stock.symbol)
+              .then(({ error }) => {
+                if (error) console.warn(`priority_stocks update (${stock.symbol}):`, error.message);
+              });
+          }
         }
       } catch (error) {
         console.error(`Update failed for ${stock.symbol}`);
@@ -271,7 +277,7 @@ export const PriorityStocksCard: React.FC = () => {
              Raw Feed
            </button>
            <p className="text-[9px] font-black text-indigo-600 uppercase tracking-tight mt-1">
-             {marketStatus.isOpen ? 'Stagger 300ms' : 'Polling Suspended'}
+             {marketStatus.isOpen ? '80ms stagger' : 'Polling suspended'}
            </p>
         </div>
       </div>
@@ -438,7 +444,7 @@ export const PriorityStocksCard: React.FC = () => {
 
       <div className="mt-4 pt-4 border-t border-slate-100 relative z-10">
         <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest leading-tight">
-          {marketStatus.isOpen ? 'Microstructure Audit Active. Staggered 300ms polling enabled.' : 'Market Closed. Displaying last known ledger values from persistence layer.'}
+          {marketStatus.isOpen ? 'Microstructure audit active. Socket + 12s REST fallback.' : 'Market closed. Last known ledger from persistence.'}
         </p>
       </div>
     </div>
