@@ -14,7 +14,7 @@ let lastDbWriteTimestamp = 0;
 let consecutiveApiFails = 0;
 
 export interface MarketTelemetry extends BreezeQuote {
-  dataSource: 'Breeze Direct' | 'Cache' | 'Simulation' | 'Offline';
+  dataSource: 'Breeze Direct' | 'Cache' | 'Offline';
   errorType?: 'token' | 'network' | 'none';
 }
 
@@ -29,7 +29,7 @@ export const getMarketSessionStatus = () => {
   const time = hours * 100 + minutes;
 
   const isWeekday = day >= 1 && day <= 5;
-  const isMarketHours = time >= 915 && time <= 1530;
+  const isMarketHours = time >= 900 && time <= 1530;
 
   return {
     isOpen: isWeekday && isMarketHours,
@@ -133,10 +133,7 @@ export const fetchLastKnownNiftyClose = async (): Promise<BreezeQuote> => {
         return niftyData;
       } catch (apiError) {
         console.error("One-time API call failed:", apiError);
-        return { // Return a zeroed-out object on complete failure
-            last_traded_price: 0, change: 0, percent_change: 0, open: 0, high: 0,
-            low: 0, previous_close: 0, volume: 0
-        };
+        throw new Error("No market telemetry available from Breeze or cache.");
       }
     }
   

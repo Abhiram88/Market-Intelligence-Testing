@@ -29,20 +29,29 @@ const MonitorTab: React.FC = () => {
   const marketStatus = getMarketSessionStatus();
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchData = async () => {
       try {
         const data = await fetchRealtimeMarketTelemetry();
-        setTelemetry(data);
+        if (isMounted) setTelemetry(data);
       } catch (e: any) {
-        // Error is not used, so we can ignore it
+        console.warn('Failed to refresh Nifty telemetry:', e?.message || e);
       } finally {
-        setIsLoading(false);
+        if (isMounted) setIsLoading(false);
       }
     };
 
     fetchData(); // Initial fetch
+    const fallbackInterval = window.setInterval(fetchData, 15000);
 
-    const socket = io(getProxyBaseUrl());
+    const socket = io(getProxyBaseUrl(), {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      timeout: 10000
+    });
 
     socket.on('connect', () => {
         console.log('Nifty socket connected');
@@ -54,10 +63,15 @@ const MonitorTab: React.FC = () => {
     });
 
     socket.on('watchlist_update', (data: Record<string, unknown>) => {
-      if ((data.symbol as string) !== 'NIFTY') return;
+      const symbol = String(data.symbol || '').toUpperCase();
+      if (symbol !== 'NIFTY' && symbol !== 'NIFTY 50') return;
       if (!getMarketSessionStatus().isOpen) return;
       const normalized = normalizeBreezeQuoteFromRow(data, 'NIFTY');
-      setTelemetry(prev => ({ ...normalized, dataSource: 'Breeze Direct' as const, ...(prev?.errorType && { errorType: prev.errorType }) }));
+      setTelemetry({
+        ...normalized,
+        dataSource: 'Breeze Direct' as const,
+        errorType: 'none'
+      });
     });
 
     socket.on('connect_error', (err) => {
@@ -69,6 +83,8 @@ const MonitorTab: React.FC = () => {
     });
 
     return () => {
+      isMounted = false;
+      window.clearInterval(fallbackInterval);
       socket.disconnect();
     };
   }, []);

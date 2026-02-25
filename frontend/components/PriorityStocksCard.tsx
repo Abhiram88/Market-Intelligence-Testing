@@ -3,6 +3,7 @@ import { io } from 'socket.io-client';
 import { supabase } from '../lib/supabase';
 import { fetchQuote, fetchDepth, fetchHistorical, QuoteResponse, DepthResponse } from '../services/apiService';
 import { getMarketSessionStatus } from '../services/marketService';
+import { getProxyBaseUrl, normalizeBreezeQuoteFromRow } from '../services/breezeService';
 import { LiquidityMetrics } from '../types';
 import { X, ArrowUp, ArrowDown, Bookmark, AlertCircle } from 'lucide-react';
 
@@ -198,10 +199,26 @@ export const PriorityStocksCard: React.FC = () => {
   }, [updateQuotesBatch]);
 
   useEffect(() => {
+    if (priorityStocks.length === 0) return;
+    // Keep a REST fallback refresh in case socket updates drop.
+    const poller = window.setInterval(() => {
+      updateQuotesBatch(priorityStocks);
+    }, 20000);
+
+    return () => window.clearInterval(poller);
+  }, [priorityStocks, updateQuotesBatch]);
+
+  useEffect(() => {
     // This effect handles the real-time updates
     if (priorityStocks.length === 0) return;
 
-    const socket = io("https://maia-breeze-proxy-service-919207294606.us-central1.run.app");
+    const socket = io(getProxyBaseUrl(), {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      timeout: 10000
+    });
 
     socket.on('connect', () => {
         console.log('Socket connected');
@@ -212,21 +229,11 @@ export const PriorityStocksCard: React.FC = () => {
         });
     });
 
-    socket.on('watchlist_update', (data) => {
-        setQuotes(prev => ({ ...prev, [data.symbol]: data }));
-        // Also update the priorityStocks array to reflect the new price
-        setPriorityStocks(prev => prev.map(stock => {
-            if (stock.symbol === data.symbol) {
-                return {
-                    ...stock,
-                    last_price: data.last_traded_price || data.ltp,
-                    change_val: data.change,
-                    change_percent: data.percent_change || data.ltp_percent_change,
-                    last_updated: new Date().toISOString()
-                };
-            }
-            return stock;
-        }));
+    socket.on('watchlist_update', (data: Record<string, unknown>) => {
+        const symbol = String(data.symbol || '').toUpperCase();
+        if (!symbol) return;
+        const normalized = normalizeBreezeQuoteFromRow(data, symbol);
+        setQuotes(prev => ({ ...prev, [symbol]: normalized }));
     });
 
     socket.on('disconnect', () => {
@@ -237,7 +244,7 @@ export const PriorityStocksCard: React.FC = () => {
     return () => {
         socket.disconnect();
     };
-  }, [priorityStocks]);
+  }, [priorityStocks.map(s => s.symbol).join(',')]);
 
 
   const marketStatus = getMarketSessionStatus();
@@ -278,7 +285,9 @@ export const PriorityStocksCard: React.FC = () => {
             const quote = quotes[stock.symbol];
             const metrics = calculateMetrics(stock.symbol);
             const error = errors[stock.symbol];
-            const isPositive = (quote?.change || 0) >= 0;
+            const displayPrice = quote?.last_traded_price ?? quote?.ltp ?? stock.last_price ?? null;
+            const displayPct = quote?.percent_change ?? quote?.ltp_percent_change ?? stock.change_percent ?? null;
+            const isPositive = (quote?.change ?? stock.change_val ?? 0) >= 0;
             const isExpanded = expandedSymbol === stock.symbol;
 
             return (
@@ -296,19 +305,19 @@ export const PriorityStocksCard: React.FC = () => {
                   </div>
                   
                   <div className="flex items-center gap-4">
-                    {quote ? (
+                    {displayPrice !== null ? (
                       <div className="text-right">
                         <p className="text-xs font-black text-slate-900 tabular-nums">
-                          {(quote.last_traded_price || quote.ltp || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          {displayPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </p>
                         <div className={`flex items-center justify-end gap-1 text-[8px] font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {isPositive ? <ArrowUp className="w-2 h-2" /> : <ArrowDown className="w-2 h-2" />}
-                          <span className="tabular-nums">{Math.abs(quote.percent_change || quote.ltp_percent_change || 0).toFixed(2)}%</span>
+                          <span className="tabular-nums">{Math.abs(displayPct || 0).toFixed(2)}%</span>
                         </div>
                       </div>
                     ) : (
                       <div className="text-right">
-                         <p className="text-xs font-black text-slate-300 tabular-nums">0.00</p>
+                         <p className="text-xs font-black text-slate-300 tabular-nums">--</p>
                          <p className="text-[8px] font-black text-slate-200 uppercase">{error ? 'Error' : 'Awaiting...'}</p>
                       </div>
                     )}
