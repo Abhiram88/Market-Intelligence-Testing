@@ -56,24 +56,28 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
       const niftyData = await fetchBreezeNiftyQuote();
       consecutiveApiFails = 0;
 
-      // Persistence (throttled)
+      // Persistence (throttled); skip on schema/RLS mismatch so Nifty still works
       if (now - lastDbWriteTimestamp > 30000) {
-        const marketLog: Omit<MarketLog, 'id' | 'log_date'> = {
-          ltp: niftyData.last_traded_price,
-          points_change: niftyData.change,
-          change_percent: niftyData.percent_change,
-          day_high: niftyData.high,
-          day_low: niftyData.low,
-          volume: niftyData.volume,
-          source: 'Breeze Direct',
-          is_live: true,
-          date: new Date().toISOString().split('T')[0],
-          niftyClose: niftyData.last_traded_price,
-          niftyChange: niftyData.change,
-          niftyChangePercent: niftyData.percent_change,
-        };
-        await supabase.from('market_logs').upsert(marketLog, { onConflict: 'log_date' });
-        lastDbWriteTimestamp = now;
+        try {
+          const marketLog: Omit<MarketLog, 'id' | 'log_date'> = {
+            ltp: niftyData.last_traded_price,
+            points_change: niftyData.change,
+            change_percent: niftyData.percent_change,
+            day_high: niftyData.high,
+            day_low: niftyData.low,
+            volume: niftyData.volume,
+            source: 'Breeze Direct',
+            is_live: true,
+            date: new Date().toISOString().split('T')[0],
+            niftyClose: niftyData.last_traded_price,
+            niftyChange: niftyData.change,
+            niftyChangePercent: niftyData.percent_change,
+          };
+          const { error } = await supabase.from('market_logs').upsert(marketLog, { onConflict: 'log_date' });
+          if (!error) lastDbWriteTimestamp = now;
+        } catch (_) {
+          // ignore upsert failure (e.g. column name mismatch, RLS)
+        }
       }
 
       return { ...niftyData, dataSource: 'Breeze Direct', errorType: 'none' };
@@ -107,8 +111,8 @@ export const fetchLastKnownNiftyClose = async (): Promise<BreezeQuote> => {
       console.warn("No cached market data found, doing one-time API call.");
       try {
         const niftyData = await fetchBreezeNiftyQuote();
-        // Also persist this one-time fetch
-        const marketLog: Omit<MarketLog, 'id'> = {
+        try {
+          const marketLog: Omit<MarketLog, 'id'> = {
             log_date: new Date().toISOString().split('T')[0],
             ltp: niftyData.last_traded_price,
             points_change: niftyData.change,
@@ -123,7 +127,10 @@ export const fetchLastKnownNiftyClose = async (): Promise<BreezeQuote> => {
             niftyChange: niftyData.change,
             niftyChangePercent: niftyData.percent_change,
           };
-        await supabase.from('market_logs').upsert(marketLog, { onConflict: 'log_date' });
+          await supabase.from('market_logs').upsert(marketLog, { onConflict: 'log_date' });
+        } catch (_) {
+          // ignore if market_logs schema/RLS doesn't match
+        }
         return niftyData;
       } catch (apiError) {
         console.error("One-time API call failed:", apiError);
