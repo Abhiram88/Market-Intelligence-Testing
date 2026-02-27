@@ -110,23 +110,7 @@ export const PriorityStocksCard: React.FC = () => {
           console.warn(`Depth failed for ${stock.symbol}`);
         }
 
-        if (quote) {
-          const ltp = quote.last_traded_price ?? quote.ltp;
-          const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-          const payload: Record<string, number | string> = {};
-          if (ltp != null && Number.isFinite(ltp)) payload.current_price = ltp;
-          const cp = num(quote.percent_change ?? quote.ltp_percent_change); if (cp != null) payload.percentage_change = cp;
-          payload.last_update = new Date().toISOString();
-          if (Object.keys(payload).length > 1) {
-            supabase
-              .from('priority_stocks')
-              .update(payload)
-              .eq('symbol', stock.symbol)
-              .then(({ error }) => {
-                if (error) console.warn(`priority_stocks update (${stock.symbol}):`, error.message);
-              });
-          }
-        }
+        // Live prices stay in local state (quotes) from socket/REST; no DB write to avoid schema mismatch.
       } catch (error) {
         console.error(`Update failed for ${stock.symbol}`);
       }
