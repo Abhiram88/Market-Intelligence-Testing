@@ -35,15 +35,15 @@ export const PriorityStocksCard: React.FC = () => {
         .order('created_at', { ascending: false });
       
       if (!error && data) {
-        setPriorityStocks(
-          data.map((row: Record<string, unknown>) => ({
-            ...row,
-            last_price: row.current_price,
-            change_percent: row.percentage_change,
-            last_updated: row.last_update,
-            change_val: row.change_value,
-          }))
-        );
+        const mapped: PriorityStock[] = data.map((row: Record<string, unknown>) => ({
+          symbol: String(row.symbol ?? ''),
+          company_name: String(row.company_name ?? ''),
+          last_price: typeof row.current_price === 'number' ? row.current_price : undefined,
+          change_percent: typeof row.percentage_change === 'number' ? row.percentage_change : undefined,
+          last_updated: row.last_update != null ? String(row.last_update) : undefined,
+          change_val: typeof row.change_value === 'number' ? row.change_value : undefined,
+        }));
+        setPriorityStocks(mapped);
         return data;
       }
     } catch (e) {
