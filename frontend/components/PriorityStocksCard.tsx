@@ -31,21 +31,22 @@ export const PriorityStocksCard: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('priority_stocks')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
-      if (!error && data) {
-        const mapped: PriorityStock[] = data.map((row: Record<string, unknown>) => ({
-          symbol: String(row.symbol ?? ''),
-          company_name: String(row.company_name ?? ''),
-          last_price: typeof row.current_price === 'number' ? row.current_price : undefined,
-          change_percent: typeof row.percentage_change === 'number' ? row.percentage_change : undefined,
-          last_updated: row.last_update != null ? String(row.last_update) : undefined,
-          change_val: typeof row.change_value === 'number' ? row.change_value : undefined,
-        }));
-        setPriorityStocks(mapped);
-        return data;
+        .select('*');
+      if (error) {
+        console.warn('Priority stocks fetch error:', error.message);
+        return [];
       }
+      if (!data || !Array.isArray(data)) return [];
+      const mapped: PriorityStock[] = data.map((row: Record<string, unknown>) => ({
+        symbol: String(row.symbol ?? ''),
+        company_name: String(row.company_name ?? ''),
+        last_price: typeof row.current_price === 'number' ? row.current_price : undefined,
+        change_percent: typeof row.percentage_change === 'number' ? row.percentage_change : undefined,
+        last_updated: row.last_update != null ? String(row.last_update) : undefined,
+        change_val: typeof row.change_value === 'number' ? row.change_value : undefined,
+      }));
+      setPriorityStocks(mapped);
+      return data;
     } catch (e) {
       console.error("Watchlist fetch failed:", e);
     }
