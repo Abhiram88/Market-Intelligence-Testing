@@ -32,10 +32,18 @@ export const PriorityStocksCard: React.FC = () => {
       const { data, error } = await supabase
         .from('priority_stocks')
         .select('*')
-        .order('added_at', { ascending: false });
+        .order('created_at', { ascending: false });
       
       if (!error && data) {
-        setPriorityStocks(data);
+        setPriorityStocks(
+          data.map((row: Record<string, unknown>) => ({
+            ...row,
+            last_price: row.current_price,
+            change_percent: row.percentage_change,
+            last_updated: row.last_update,
+            change_val: row.change_value,
+          }))
+        );
         return data;
       }
     } catch (e) {
@@ -105,10 +113,9 @@ export const PriorityStocksCard: React.FC = () => {
           const ltp = quote.last_traded_price ?? quote.ltp;
           const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
           const payload: Record<string, number | string> = {};
-          if (ltp != null && Number.isFinite(ltp)) payload.last_price = ltp;
-          const cv = num(quote.change); if (cv != null) payload.change_val = cv;
-          const cp = num(quote.percent_change ?? quote.ltp_percent_change); if (cp != null) payload.change_percent = cp;
-          payload.last_updated = new Date().toISOString();
+          if (ltp != null && Number.isFinite(ltp)) payload.current_price = ltp;
+          const cp = num(quote.percent_change ?? quote.ltp_percent_change); if (cp != null) payload.percentage_change = cp;
+          payload.last_update = new Date().toISOString();
           if (Object.keys(payload).length > 1) {
             supabase
               .from('priority_stocks')

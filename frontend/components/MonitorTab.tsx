@@ -123,41 +123,51 @@ const MonitorTab: React.FC = () => {
   };
 
   const handleStockAnalysis = async () => {
-    if (!stockSymbol) return;
+    const symbol = (stockSymbol || '').trim().toUpperCase();
+    if (!symbol) return;
     setIsAnalyzingStock(true);
     setIntelError(null);
     setStockAnalysis(null);
     setStockMetrics(null);
-    
+
     try {
-      const [quote, depth] = await Promise.all([
-        fetchQuote(stockSymbol),
-        fetchDepth(stockSymbol)
-      ]);
+      try {
+        const [quote, depth] = await Promise.all([
+          fetchQuote(symbol),
+          fetchDepth(symbol)
+        ]);
+        const bid = depth.best_bid_price || quote.best_bid_price || 0;
+        const ask = depth.best_offer_price || quote.best_offer_price || 0;
+        const mid = (bid + ask) / 2;
+        const spread = mid > 0 ? ((ask - bid) / mid) * 100 : null;
+        const bidQty = depth.best_bid_quantity || 0;
+        const askQty = depth.best_offer_quantity || 0;
+        setStockMetrics({
+          spread_pct: spread,
+          depth_ratio: (bidQty + 1) / (askQty + 1),
+          vol_ratio: null,
+          regime: 'NEUTRAL',
+          execution_style: spread && spread < 0.15 ? 'OK FOR MARKET' : 'LIMIT ONLY',
+          bid, ask, bidQty, askQty,
+          avg_vol_20d: null
+        });
+      } catch (quoteErr: any) {
+        setStockMetrics({
+          spread_pct: null,
+          depth_ratio: 1,
+          vol_ratio: null,
+          regime: 'NEUTRAL',
+          execution_style: 'LIMIT ONLY',
+          bid: 0, ask: 0, bidQty: 0, askQty: 0,
+          avg_vol_20d: null
+        });
+      }
 
-      const bid = depth.best_bid_price || quote.best_bid_price || 0;
-      const ask = depth.best_offer_price || quote.best_offer_price || 0;
-      const mid = (bid + ask) / 2;
-      const spread = mid > 0 ? ((ask - bid) / mid) * 100 : null;
-      
-      const bidQty = depth.best_bid_quantity || 0;
-      const askQty = depth.best_offer_quantity || 0;
-      setStockMetrics({
-        spread_pct: spread,
-        depth_ratio: (bidQty + 1) / (askQty + 1),
-        vol_ratio: null,
-        regime: 'NEUTRAL',
-        execution_style: spread && spread < 0.15 ? 'OK FOR MARKET' : 'LIMIT ONLY',
-        bid, ask, 
-        bidQty, 
-        askQty,
-        avg_vol_20d: null
-      });
-
-      const result = await analyzeStockDeepDive(stockSymbol);
+      const result = await analyzeStockDeepDive(symbol);
       setStockAnalysis(result);
     } catch (e: any) {
-      setIntelError(e.message || "Failed to perform deep dive.");
+      const msg = e?.message || "Failed to perform deep dive.";
+      setIntelError(msg);
     } finally {
       setIsAnalyzingStock(false);
     }
