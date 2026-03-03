@@ -567,26 +567,35 @@ OBJECTIVES:
 OUTPUT RULES:
 Return the response in STRICT JSON format with keys: headline, narrative, category, sentiment, impact_score, swing_recommendation, affected_stocks, affected_sectors, analyst_calls."""
 
+    # Try without Google Search first (avoids 500 in regions where grounding is restricted)
+    last_err = None
+    for model_name in get_gemini_model_candidates():
+        try:
+            response = ai_client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(system_instruction=sys_instr),
+            )
+            result = extract_json(response.text)
+            if result:
+                return jsonify(result)
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Stock deep-dive no-tools ({model_name}): {e}")
+            continue
+
+    # Fallback: try with Google Search (may work in some regions)
     try:
         response, _ = generate_with_model_fallback(prompt, sys_instr)
         result = extract_json(response.text)
-        return jsonify(result) if result else jsonify({"error": "Failed to parse AI response"}), 500
+        if result:
+            return jsonify(result)
     except Exception as e:
-        logger.warning(f"Stock deep-dive with tools failed: {e}. Retrying without Google Search.")
-        for model_name in get_gemini_model_candidates():
-            try:
-                response = ai_client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(system_instruction=sys_instr),
-                )
-                result = extract_json(response.text)
-                if result:
-                    return jsonify(result)
-            except Exception as retry_e:
-                logger.warning(f"Stock deep-dive without tools ({model_name}) failed: {retry_e}")
-                continue
-        return jsonify({"error": f"Equity deep dive failed. Last error: {e}"}), 500
+        last_err = e
+        logger.warning(f"Stock deep-dive with tools failed: {e}")
+
+    err_msg = str(last_err) if last_err else "No model succeeded"
+    return jsonify({"error": f"Equity deep dive failed. {err_msg}"}), 500
 
 
 # ─────────────────────────────────────────────
