@@ -25,7 +25,7 @@ export interface NewsAttribution {
   sources?: { uri: string; title: string }[];
   affected_stocks: string[];
   affected_sectors: string[];
-  analyst_calls?: { source: string; rating: string; target: string }[];
+  analyst_calls?: { source: string; rating: string; target: string; duration?: string }[];
   swing_recommendation?: string;
 }
 

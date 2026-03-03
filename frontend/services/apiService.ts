@@ -187,16 +187,24 @@ function safeStr(v: unknown): string {
   if (v == null) return '';
   if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  return typeof (v as any)?.toString === 'function' ? (v as any).toString() : JSON.stringify(v);
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (typeof o.rationale === 'string') return o.rationale;
+    if (typeof o.text === 'string') return o.text;
+    if (typeof o.recommendation === 'string') return o.recommendation;
+    return JSON.stringify(v);
+  }
+  return String(v);
 }
 
-/** Normalize analyst_calls from API (may use action, target_price, etc.) to { source, rating, target } strings */
-function normalizeAnalystCalls(raw: unknown): { source: string; rating: string; target: string }[] {
+/** Normalize analyst_calls from API (may use action, target_price, time_horizon, etc.) to { source, rating, target, duration } */
+function normalizeAnalystCalls(raw: unknown): { source: string; rating: string; target: string; duration?: string }[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((c: any) => ({
     source: safeStr(c?.source ?? c?.broker ?? c?.analyst ?? c?.firm ?? ''),
     rating: safeStr(c?.rating ?? c?.action ?? ''),
     target: safeStr(c?.target ?? c?.target_price ?? ''),
+    duration: safeStr(c?.duration ?? c?.time_horizon ?? c?.horizon ?? '') || undefined,
   }));
 }
 

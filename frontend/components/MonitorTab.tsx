@@ -249,7 +249,7 @@ const MonitorTab: React.FC = () => {
                     <div className="flex items-center gap-2 mb-4"><Info className="w-4 h-4 text-indigo-600" /><p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Swing Trading Recommendation (1D - 1M)</p></div>
                     <div className="flex items-start gap-6">
                       <div className={`text-3xl font-black uppercase tracking-tighter ${stockAnalysis.sentiment === 'BUY' || stockAnalysis.sentiment === 'POSITIVE' ? 'text-green-600' : 'text-red-600'}`}>{stockAnalysis.sentiment === 'BUY' || stockAnalysis.sentiment === 'POSITIVE' ? 'Accumulate' : 'Avoid/Sell'}</div>
-                      <p className="text-sm font-medium text-slate-600 leading-relaxed">{stockAnalysis.swing_recommendation || `Based on current market volatility and ${stockSymbol}'s microstructure, the tactical outlook suggests ${stockAnalysis.sentiment.toLowerCase()} positioning.`}</p>
+                      <p className="text-sm font-medium text-slate-600 leading-relaxed">{typeof stockAnalysis.swing_recommendation === 'string' && stockAnalysis.swing_recommendation && !stockAnalysis.swing_recommendation.startsWith('[') ? stockAnalysis.swing_recommendation : `Based on current market volatility and ${stockSymbol}'s microstructure, the tactical outlook suggests ${stockAnalysis.sentiment.toLowerCase()} positioning.`}</p>
                     </div>
                   </div>
                 </div>
@@ -258,11 +258,13 @@ const MonitorTab: React.FC = () => {
                     const source = typeof call.source === 'string' ? call.source : String(call.source ?? '');
                     const rating = typeof call.rating === 'string' ? call.rating : String(call.rating ?? '');
                     const target = typeof call.target === 'string' ? call.target : String(call.target ?? '');
+                    const duration = call.duration && typeof call.duration === 'string' ? call.duration : '';
                     return (
                       <div key={idx} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 truncate">{source}</p>
                         <div className={`text-xl font-black uppercase tracking-tighter ${rating.toUpperCase().includes('BUY') ? 'text-green-600' : 'text-slate-900'}`}>{rating}</div>
                         <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Target: <span className="text-indigo-600">₹{target}</span></p>
+                        {duration ? <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Horizon: <span className="text-slate-600">{duration}</span></p> : null}
                       </div>
                     );
                   })}
