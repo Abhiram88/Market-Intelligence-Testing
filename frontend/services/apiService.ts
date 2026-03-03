@@ -183,6 +183,23 @@ export const summarizeMarketOutlook = async (log: MarketLog): Promise<NewsAttrib
   return data;
 };
 
+function safeStr(v: unknown): string {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  return typeof (v as any)?.toString === 'function' ? (v as any).toString() : JSON.stringify(v);
+}
+
+/** Normalize analyst_calls from API (may use action, target_price, etc.) to { source, rating, target } strings */
+function normalizeAnalystCalls(raw: unknown): { source: string; rating: string; target: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((c: any) => ({
+    source: safeStr(c?.source ?? c?.broker ?? c?.analyst ?? c?.firm ?? ''),
+    rating: safeStr(c?.rating ?? c?.action ?? ''),
+    target: safeStr(c?.target ?? c?.target_price ?? ''),
+  }));
+}
+
 /**
  * Perform deep dive analysis on a stock using Gemini AI
  */
@@ -203,7 +220,21 @@ export const analyzeStockDeepDive = async (symbol: string): Promise<NewsAttribut
 
   const data = await response.json();
   if (data?.error) throw new Error(data.error);
-  return data;
+
+  // Normalize so we never render objects (React #31): ensure all fields are strings/arrays of strings
+  return {
+    headline: safeStr(data.headline),
+    narrative: safeStr(data.narrative),
+    category: safeStr(data.category),
+    sentiment: (['POSITIVE', 'NEGATIVE', 'NEUTRAL', 'BULLISH', 'BEARISH', 'BUY', 'SELL', 'HOLD'].includes(String(data.sentiment || ''))
+      ? String(data.sentiment) : 'NEUTRAL') as NewsAttribution['sentiment'],
+    impact_score: typeof data.impact_score === 'number' ? data.impact_score : 0,
+    sources: Array.isArray(data.sources) ? data.sources : undefined,
+    affected_stocks: Array.isArray(data.affected_stocks) ? data.affected_stocks.map((s: unknown) => safeStr(s)) : [],
+    affected_sectors: Array.isArray(data.affected_sectors) ? data.affected_sectors.map((s: unknown) => safeStr(s)) : [],
+    analyst_calls: normalizeAnalystCalls(data.analyst_calls),
+    swing_recommendation: safeStr(data.swing_recommendation),
+  };
 };
 
 /**

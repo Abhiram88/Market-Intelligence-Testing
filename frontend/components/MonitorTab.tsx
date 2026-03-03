@@ -234,7 +234,7 @@ const MonitorTab: React.FC = () => {
                 </div>
                 <h1 className="text-4xl font-black text-slate-900 leading-[1.1] mb-8 uppercase tracking-tighter">FORENSIC AUDIT: {stockAnalysis.headline}</h1>
                 <div className="prose prose-slate max-w-none mb-12">
-                  {stockAnalysis.narrative.split('\n\n').map((para, i) => <p key={i} className="text-slate-600 text-lg leading-relaxed mb-6 font-medium">{para}</p>)}
+                  {(typeof stockAnalysis.narrative === 'string' ? stockAnalysis.narrative : '').split('\n\n').filter(Boolean).map((para, i) => <p key={i} className="text-slate-600 text-lg leading-relaxed mb-6 font-medium">{para}</p>)}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
                   <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
@@ -254,13 +254,18 @@ const MonitorTab: React.FC = () => {
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  {stockAnalysis.analyst_calls?.map((call, idx) => (
-                    <div key={idx} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 truncate">{call.source}</p>
-                      <div className={`text-xl font-black uppercase tracking-tighter ${call.rating.toUpperCase().includes('BUY') ? 'text-green-600' : 'text-slate-900'}`}>{call.rating}</div>
-                      <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Target: <span className="text-indigo-600">₹{call.target}</span></p>
-                    </div>
-                  ))}
+                  {(stockAnalysis.analyst_calls || []).map((call, idx) => {
+                    const source = typeof call.source === 'string' ? call.source : String(call.source ?? '');
+                    const rating = typeof call.rating === 'string' ? call.rating : String(call.rating ?? '');
+                    const target = typeof call.target === 'string' ? call.target : String(call.target ?? '');
+                    return (
+                      <div key={idx} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 truncate">{source}</p>
+                        <div className={`text-xl font-black uppercase tracking-tighter ${rating.toUpperCase().includes('BUY') ? 'text-green-600' : 'text-slate-900'}`}>{rating}</div>
+                        <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Target: <span className="text-indigo-600">₹{target}</span></p>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : (

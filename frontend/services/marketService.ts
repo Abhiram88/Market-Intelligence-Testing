@@ -84,15 +84,12 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
 
     } catch (error: any) {
       consecutiveApiFails++;
-      if (consecutiveApiFails >= 5) {
-        const lastKnown = await fetchLastKnownNiftyClose();
-        return { ...lastKnown, dataSource: 'Cache', errorType: 'network' };
-      }
+      // When market is open, never return cache on load: keep throwing so UI shows "Loading" until socket or REST delivers live data
       const errorType = error.message.includes('session') ? 'token' : 'network';
       throw new Error(errorType);
     }
   }
-  // 3. Market Closed Strategy
+  // 3. Market Closed Strategy — only use cache when market is closed
   else {
     return { ...(await fetchLastKnownNiftyClose()), dataSource: 'Cache', errorType: 'none' };
   }
