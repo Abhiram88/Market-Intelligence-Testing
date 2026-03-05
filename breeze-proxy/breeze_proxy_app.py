@@ -978,6 +978,24 @@ def reg30_analyze():
                     extracted = {}
                 result['symbol'] = extracted.get('nse_symbol') or extracted.get('symbol') or result.get('symbol') or symbol or ''
                 result['company_name'] = extracted.get('company_name') or result.get('company_name') or company_name or 'Unknown'
+                # Fallback: parse from document text if Gemini missed General Information (table format: | NSE Symbol* | VALUE |)
+                if (not result['symbol'] or not result['company_name']) and attachment_text:
+                    head = attachment_text[:2500]
+                    if not result['symbol'] and ('NSE Symbol' in head or 'nse symbol' in head.lower()):
+                        m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:\n]*\s*([A-Z0-9]{2,20})\s*[\s|]', head, re.IGNORECASE)
+                        if not m:
+                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:]*([A-Z0-9]{2,20})', head, re.IGNORECASE)
+                        if m:
+                            result['symbol'] = m.group(1).strip()
+                            extracted['nse_symbol'] = result['symbol']
+                    if not result['company_name'] or result['company_name'] == 'Unknown':
+                        if 'Name of the Company' in head or 'name of the company' in head.lower():
+                            m = re.search(r'Name\s+of\s+the\s+Company[^*]*\*?\s*[\s|:\n]*\s*([^\n|]+?)(?:\s*[\n|]|$)', head, re.IGNORECASE)
+                            if m:
+                                name = m.group(1).strip()
+                                if name and len(name) > 2 and name.upper() not in ('NA', 'N/A', 'NOT LISTED'):
+                                    result['company_name'] = name
+                                    extracted['company_name'] = name
                 result['extracted'] = extracted
                 return jsonify(result)
             except Exception as e:
@@ -986,6 +1004,72 @@ def reg30_analyze():
         return jsonify({"error": "Reg30 analysis failed"}), 500
     except Exception as e:
         logger.exception("Reg30 analyze error")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/gemini/reg30-narrative', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def reg30_narrative():
+    """Generate an elaborate tactical event analysis narrative (2-4 paragraphs)."""
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
+    initialize_ai_clients()
+    if not ai_client:
+        return jsonify({"error": "Gemini AI client not initialized"}), 500
+    try:
+        data = request.get_json(silent=True) or {}
+        symbol = (data.get('symbol') or '').strip()
+        company_name = (data.get('company_name') or 'Unknown').strip()
+        event_family = (data.get('event_family') or 'ORDER_CONTRACT').strip()
+        stage = (data.get('stage') or '')
+        order_value_cr = data.get('order_value_cr')
+        customer = (data.get('customer') or '')
+        summary = (data.get('summary') or '')[:2000]
+        impact_score = int(data.get('impact_score') or 0)
+        institutional_risk = (data.get('institutional_risk') or 'LOW').strip()
+        policy_bias = (data.get('policy_bias') or 'NEUTRAL').strip()
+        tactical_plan = (data.get('tactical_plan') or 'MOMENTUM_OK').strip()
+        trigger_text = (data.get('trigger_text') or '').strip()
+
+        sys_instr = (
+            "You are a Senior Tactical Analyst for Indian Equities. "
+            "Write a detailed, professional event analysis (2-4 short paragraphs) for tactical traders. "
+            "Cover: (1) impact on revenue visibility and alignment with sectoral policy, "
+            "(2) execution risk profile and deal magnitude as a liquidity event, "
+            "(3) institutional profit-taking and sell-on-news risk, near-term pullback potential, "
+            "(4) prudent entry strategies and what to guard against (e.g. distribution, bid-on-news). "
+            "Use neutral, analytical tone. Do not invent prices or targets. "
+            "Output STRICT JSON only: {\"event_analysis_text\": \"<full narrative>\", \"tone\": \"analytical\"}."
+        )
+        prompt = (
+            f"Company: {company_name} (Symbol: {symbol or 'N/A'}). "
+            f"Event: {event_family}, stage {stage}. "
+            f"Order value: ₹{order_value_cr} Cr. Customer: {customer or 'Not disclosed'}. "
+            f"Summary: {summary}\n\n"
+            f"Impact score: {impact_score}. Institutional risk: {institutional_risk}. Policy bias: {policy_bias}. "
+            f"Tactical plan: {tactical_plan}. Trigger: {trigger_text}\n\n"
+            "Write the detailed event analysis as specified in the system instruction."
+        )
+
+        for model_name in get_gemini_model_candidates():
+            try:
+                response = ai_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(system_instruction=sys_instr),
+                )
+                out = extract_json(response.text)
+                if out and isinstance(out.get('event_analysis_text'), str):
+                    return jsonify({
+                        "event_analysis_text": out["event_analysis_text"].strip(),
+                        "tone": out.get("tone") or "analytical"
+                    })
+            except Exception as e:
+                logger.warning(f"Reg30 narrative ({model_name}): {e}")
+                continue
+        return jsonify({"error": "Narrative generation failed"}), 500
+    except Exception as e:
+        logger.exception("Reg30 narrative error")
         return jsonify({"error": str(e)}), 500
 
 

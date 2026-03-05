@@ -10,6 +10,36 @@ import {
 import { analyzeReg30Event, analyzeEventNarrative } from "./reg30GeminiService";
 import { supabase } from "../lib/supabase";
 
+/** Call proxy to generate elaborate tactical narrative (no API key in frontend). */
+async function analyzeEventNarrativeViaProxy(inputs: {
+  symbol: string;
+  company_name?: string;
+  event_family: string;
+  stage?: string;
+  order_value_cr?: number;
+  customer?: string;
+  summary?: string;
+  impact_score: number;
+  institutional_risk?: string;
+  policy_bias?: string;
+  tactical_plan?: string;
+  trigger_text?: string;
+}): Promise<{ event_analysis_text: string; tone: string } | null> {
+  try {
+    const res = await fetch(resolveBreezeUrl('/api/gemini/reg30-narrative'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(inputs),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && typeof data.event_analysis_text === 'string') return data;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Call proxy to run Reg30 Gemini analysis (no API key needed in frontend). */
 async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg30Analysis | null> {
   try {
@@ -381,7 +411,20 @@ export const runReg30Analysis = async (
           } catch (e) {}
           
           if (!narrativeData) {
-            narrativeData = await analyzeEventNarrative({
+            narrativeData = await analyzeEventNarrativeViaProxy({
+              symbol: resolvedSymbol,
+              company_name: resolvedCompany,
+              event_family: familyForScoring,
+              stage: aiResult.extracted?.stage,
+              order_value_cr: aiResult.extracted?.order_value_cr,
+              customer: aiResult.extracted?.customer,
+              summary: aiResult.summary,
+              impact_score: scoring.impact_score,
+              institutional_risk: det.institutional_risk,
+              policy_bias: det.policy_bias,
+              tactical_plan: det.tactical_plan,
+              trigger_text: det.trigger_text
+            }) ?? await analyzeEventNarrative({
               symbol: resolvedSymbol,
               event_family: c.event_family,
               stage: aiResult.extracted.stage,
@@ -478,7 +521,20 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
         impact_score: scoring.impact_score,
         extracted_data: aiResult.extracted
       });
-      const narrativeData = await analyzeEventNarrative({
+      const narrativeData = await analyzeEventNarrativeViaProxy({
+        symbol: resolvedSymbol,
+        company_name: resolvedCompany,
+        event_family: report.event_family,
+        stage: aiResult.extracted?.stage,
+        order_value_cr: aiResult.extracted?.order_value_cr,
+        customer: aiResult.extracted?.customer,
+        summary: aiResult.summary,
+        impact_score: scoring.impact_score,
+        institutional_risk: det.institutional_risk,
+        policy_bias: det.policy_bias,
+        tactical_plan: det.tactical_plan,
+        trigger_text: det.trigger_text
+      }) ?? await analyzeEventNarrative({
         symbol: resolvedSymbol,
         event_family: report.event_family,
         stage: aiResult.extracted.stage,
