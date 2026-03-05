@@ -947,8 +947,9 @@ def reg30_analyze():
             "4) CURRENCY: Convert raw INR to Crore (CR). 1 CR = 10,000,000 INR.\n"
             "5) STAGE: Must be one of: \"L1\" | \"LOA\" | \"WO\" | \"NTP\" | \"MOU\" | \"OTHER\".\n"
             "6) Output MUST be STRICT JSON only.\n"
-            "7) Extract company_name and nse_symbol from the document when present (header, footer or body). "
-            "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore)."
+            "7) Extract company_name and nse_symbol from the document when present — often in the first lines under 'General Information' (e.g. 'NSE Symbol*' / 'Name of the Company*'). Always prefer document values over context.\n"
+            "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore).\n"
+            "9) For order_value_cr use ONLY 'Broad commercial consideration' or 'size of the order(s)/contract(s)' (convert to Crore). Do NOT use 'Value of the order(s)/contract(s)' — it often has data entry errors (extra zeros)."
         )
         for model_name in get_gemini_model_candidates():
             try:

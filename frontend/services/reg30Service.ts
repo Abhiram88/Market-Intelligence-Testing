@@ -32,8 +32,15 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
     }
     const data = await res.json();
     if (!data || typeof data.summary !== 'string') return null;
+    // #region agent log
+    fetch('http://127.0.0.1:7668/ingest/97e7cb68-ab84-452b-a7a9-2d1b110002d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'930199'},body:JSON.stringify({sessionId:'930199',location:'reg30Service.ts:proxyResponse',message:'Proxy reg30 response',data:{topLevelSymbol:data.symbol,topLevelCompany:data.company_name,extractedKeys:data.extracted?Object.keys(data.extracted):[],extractedSymbol:(data.extracted&&typeof data.extracted==='object')?data.extracted.symbol:undefined,extractedNseSymbol:(data.extracted&&typeof data.extracted==='object')?data.extracted.nse_symbol:undefined,extractedCompany:(data.extracted&&typeof data.extracted==='object')?data.extracted.company_name:undefined,order_value_cr:(data.extracted&&typeof data.extracted==='object')?data.extracted.order_value_cr:undefined},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
     // Proxy returns extraction-only schema (summary, direction_hint, confidence, extracted, evidence_spans, missing_fields).
     // Impact and recommendation are computed by calculateScoreAndRecommendation in the pipeline.
+    const extracted = data.extracted && typeof data.extracted === 'object' ? data.extracted : {};
+    const mergedExtracted = { ...extracted };
+    if (data.symbol != null && mergedExtracted.nse_symbol == null && mergedExtracted.symbol == null) mergedExtracted.nse_symbol = data.symbol;
+    if (data.company_name != null && mergedExtracted.company_name == null) mergedExtracted.company_name = data.company_name;
     return {
       summary: data.summary,
       impact_score: typeof data.impact_score === 'number' ? data.impact_score : 0,
@@ -41,7 +48,7 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
       confidence: typeof data.confidence === 'number' ? data.confidence : 0,
       missing_fields: Array.isArray(data.missing_fields) ? data.missing_fields : [],
       evidence_spans: Array.isArray(data.evidence_spans) ? data.evidence_spans : [],
-      extracted: data.extracted && typeof data.extracted === 'object' ? data.extracted : {},
+      extracted: mergedExtracted,
     } as Reg30Analysis;
   } catch (e) {
     console.error('Reg30 proxy analysis failed:', e);
@@ -329,6 +336,9 @@ export const runReg30Analysis = async (
       
       if (!aiResult) {
         attachment_text = await fetchAttachmentText(c.attachment_link || "");
+        // #region agent log
+        fetch('http://127.0.0.1:7668/ingest/97e7cb68-ab84-452b-a7a9-2d1b110002d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'930199'},body:JSON.stringify({sessionId:'930199',location:'reg30Service.ts:attachmentText',message:'Attachment text for analysis',data:{len:attachment_text.length,snippet:attachment_text.substring(0,500),hasNseSymbol:attachment_text.includes('NSE Symbol')||attachment_text.includes('MCLOUD'),hasCompany:attachment_text.includes('Magellanic')||attachment_text.includes('Company')},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+        // #endregion
         onRowProgress(c.id, 'AI_ANALYZING');
         aiResult = await analyzeReg30EventViaProxy({ ...c, attachment_text }) ?? await analyzeReg30Event({ ...c, attachment_text });
         if (aiResult) {
@@ -343,7 +353,14 @@ export const runReg30Analysis = async (
         const ext = aiResult.extracted || {};
         const resolvedSymbol = ext.nse_symbol ?? ext.symbol ?? c.symbol;
         const resolvedCompany = ext.company_name ?? c.company_name;
-        const scoring = calculateScoreAndRecommendation(c.event_family!, aiResult.extracted, aiResult.confidence, c.event_date);
+        const familyForScoring =
+          c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
+            ? 'ORDER_CONTRACT'
+            : c.event_family!;
+        const scoring = calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, c.event_date);
+        // #region agent log
+        fetch('http://127.0.0.1:7668/ingest/97e7cb68-ab84-452b-a7a9-2d1b110002d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'930199'},body:JSON.stringify({sessionId:'930199',location:'reg30Service.ts:scoring',message:'Resolved symbol and scoring',data:{candidateEventFamily:c.event_family,familyForScoring,extNseSymbol:ext.nse_symbol,extSymbol:ext.symbol,extCompany:ext.company_name,resolvedSymbol,resolvedCompany,impact_score:scoring.impact_score,factors:scoring.factors,order_value_cr:ext.order_value_cr,stage:ext.stage},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
         
         let analysisPayload: any = {};
         if (scoring.impact_score >= 50) {
@@ -391,7 +408,7 @@ export const runReg30Analysis = async (
           symbol: resolvedSymbol,
           company_name: resolvedCompany,
           source: c.source,
-          event_family: c.event_family,
+          event_family: familyForScoring,
           summary: aiResult.summary,
           impact_score: scoring.impact_score,
           action_recommendation: scoring.recommendation,
