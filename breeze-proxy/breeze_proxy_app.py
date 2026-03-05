@@ -889,9 +889,20 @@ def parse_attachment():
         }
         if 'nseindia.com' in url or 'nsearchives.nseindia.com' in url:
             headers['Referer'] = 'https://www.nseindia.com/'
-        r = req.get(url, headers=headers, timeout=30)
-        r.raise_for_status()
-        html = r.text
+        import time
+        last_err = None
+        for attempt in range(2):
+            try:
+                r = req.get(url, headers=headers, timeout=35)
+                r.raise_for_status()
+                html = r.text
+                break
+            except Exception as e:
+                last_err = e
+                if attempt == 0:
+                    time.sleep(2)
+        else:
+            raise last_err
         # Strip tags and collapse whitespace for text extraction
         text = re.sub(r'<script[^>]*>[\s\S]*?</script>', ' ', html, flags=re.IGNORECASE)
         text = re.sub(r'<style[^>]*>[\s\S]*?</style>', ' ', text, flags=re.IGNORECASE)
@@ -947,7 +958,7 @@ def reg30_analyze():
             "4) CURRENCY: Convert raw INR to Crore (CR). 1 CR = 10,000,000 INR.\n"
             "5) STAGE: Must be one of: \"L1\" | \"LOA\" | \"WO\" | \"NTP\" | \"MOU\" | \"OTHER\".\n"
             "6) Output MUST be STRICT JSON only.\n"
-            "7) Extract company_name and nse_symbol from the document when present — often in the first lines under 'General Information' (e.g. 'NSE Symbol*' / 'Name of the Company*'). Always prefer document values over context.\n"
+            "7) MANDATORY: Read the very beginning of the document. Look for a 'General Information' section with 'NSE Symbol*' and 'Name of the Company*' (or similar). Set extracted.nse_symbol to the symbol value (e.g. MCLOUD, AHUCON) and extracted.company_name to the full company name. Always prefer these document values over any context.\n"
             "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore).\n"
             "9) For order_value_cr use ONLY 'Broad commercial consideration' or 'size of the order(s)/contract(s)' (convert to Crore). Do NOT use 'Value of the order(s)/contract(s)' — it often has data entry errors (extra zeros)."
         )
@@ -961,13 +972,12 @@ def reg30_analyze():
                 result = extract_json(response.text)
                 if not result or not isinstance(result.get('summary'), str):
                     continue
-                # Normalize to expected shape: ensure extracted has all fields used by frontend scoring
+                # Normalize: promote symbol/company from extracted to top level so frontend always has them
                 extracted = result.get('extracted') or {}
                 if not isinstance(extracted, dict):
                     extracted = {}
-                # Ensure symbol/company at top level for frontend (from extracted or keep from candidate)
-                result.setdefault('symbol', extracted.get('nse_symbol') or extracted.get('symbol') or symbol)
-                result.setdefault('company_name', extracted.get('company_name') or company_name)
+                result['symbol'] = extracted.get('nse_symbol') or extracted.get('symbol') or result.get('symbol') or symbol or ''
+                result['company_name'] = extracted.get('company_name') or result.get('company_name') or company_name or 'Unknown'
                 result['extracted'] = extracted
                 return jsonify(result)
             except Exception as e:

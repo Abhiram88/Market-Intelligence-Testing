@@ -321,7 +321,10 @@ export const runReg30Analysis = async (
 ): Promise<Reg30Report[]> => {
   const reports: Reg30Report[] = [];
   
-  for (const c of candidates) {
+  const delayMs = 2200;
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    if (i > 0) await new Promise(r => setTimeout(r, delayMs));
     try {
       onRowProgress(c.id, 'FETCHING');
       const cacheKey = getStringHash(`${c.event_family}|${c.company_name}|${c.attachment_link || c.id}`);
@@ -339,8 +342,16 @@ export const runReg30Analysis = async (
         // #region agent log
         fetch('http://127.0.0.1:7668/ingest/97e7cb68-ab84-452b-a7a9-2d1b110002d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'930199'},body:JSON.stringify({sessionId:'930199',location:'reg30Service.ts:attachmentText',message:'Attachment text for analysis',data:{len:attachment_text.length,snippet:attachment_text.substring(0,500),hasNseSymbol:attachment_text.includes('NSE Symbol')||attachment_text.includes('MCLOUD'),hasCompany:attachment_text.includes('Magellanic')||attachment_text.includes('Company')},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
         // #endregion
+        if (attachment_text.length < 100) {
+          onRowProgress(c.id, 'FAILED');
+          continue;
+        }
         onRowProgress(c.id, 'AI_ANALYZING');
-        aiResult = await analyzeReg30EventViaProxy({ ...c, attachment_text }) ?? await analyzeReg30Event({ ...c, attachment_text });
+        try {
+          aiResult = await analyzeReg30EventViaProxy({ ...c, attachment_text }) ?? await analyzeReg30Event({ ...c, attachment_text });
+        } catch (_) {
+          aiResult = null;
+        }
         if (aiResult) {
           try {
             await supabase.from('gemini_cache').upsert({ cache_key: cacheKey, response_json: aiResult });
