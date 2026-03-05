@@ -32,9 +32,6 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
     }
     const data = await res.json();
     if (!data || typeof data.summary !== 'string') return null;
-    // #region agent log
-    fetch('http://127.0.0.1:7668/ingest/97e7cb68-ab84-452b-a7a9-2d1b110002d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'930199'},body:JSON.stringify({sessionId:'930199',location:'reg30Service.ts:proxyResponse',message:'Proxy reg30 response',data:{topLevelSymbol:data.symbol,topLevelCompany:data.company_name,extractedKeys:data.extracted?Object.keys(data.extracted):[],extractedSymbol:(data.extracted&&typeof data.extracted==='object')?data.extracted.symbol:undefined,extractedNseSymbol:(data.extracted&&typeof data.extracted==='object')?data.extracted.nse_symbol:undefined,extractedCompany:(data.extracted&&typeof data.extracted==='object')?data.extracted.company_name:undefined,order_value_cr:(data.extracted&&typeof data.extracted==='object')?data.extracted.order_value_cr:undefined},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     // Proxy returns extraction-only schema (summary, direction_hint, confidence, extracted, evidence_spans, missing_fields).
     // Impact and recommendation are computed by calculateScoreAndRecommendation in the pipeline.
     const extracted = data.extracted && typeof data.extracted === 'object' ? data.extracted : {};
@@ -339,9 +336,6 @@ export const runReg30Analysis = async (
       
       if (!aiResult) {
         attachment_text = await fetchAttachmentText(c.attachment_link || "");
-        // #region agent log
-        fetch('http://127.0.0.1:7668/ingest/97e7cb68-ab84-452b-a7a9-2d1b110002d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'930199'},body:JSON.stringify({sessionId:'930199',location:'reg30Service.ts:attachmentText',message:'Attachment text for analysis',data:{len:attachment_text.length,snippet:attachment_text.substring(0,500),hasNseSymbol:attachment_text.includes('NSE Symbol')||attachment_text.includes('MCLOUD'),hasCompany:attachment_text.includes('Magellanic')||attachment_text.includes('Company')},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
-        // #endregion
         if (attachment_text.length < 100) {
           onRowProgress(c.id, 'FAILED');
           continue;
@@ -369,9 +363,6 @@ export const runReg30Analysis = async (
             ? 'ORDER_CONTRACT'
             : c.event_family!;
         const scoring = calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, c.event_date);
-        // #region agent log
-        fetch('http://127.0.0.1:7668/ingest/97e7cb68-ab84-452b-a7a9-2d1b110002d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'930199'},body:JSON.stringify({sessionId:'930199',location:'reg30Service.ts:scoring',message:'Resolved symbol and scoring',data:{candidateEventFamily:c.event_family,familyForScoring,extNseSymbol:ext.nse_symbol,extSymbol:ext.symbol,extCompany:ext.company_name,resolvedSymbol,resolvedCompany,impact_score:scoring.impact_score,factors:scoring.factors,order_value_cr:ext.order_value_cr,stage:ext.stage},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
-        // #endregion
         
         let analysisPayload: any = {};
         if (scoring.impact_score >= 50) {
@@ -406,42 +397,49 @@ export const runReg30Analysis = async (
           }
           
           analysisPayload = {
-            ...det,
             event_analysis_text: narrativeData?.event_analysis_text || "Tactical overview generated successfully.",
-            analysis_updated_at: new Date().toISOString()
+            analysis_updated_at: new Date().toISOString(),
+            institutional_risk: det.institutional_risk,
+            policy_bias: det.policy_bias,
+            policy_event: det.policy_event,
+            tactical_plan: det.tactical_plan,
+            trigger_text: det.trigger_text
           };
         }
 
         const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${c.event_date}|${aiResult.summary.substring(0, 30)}|${c.id}`);
-        
-        const payload = {
-          event_date: c.event_date,
-          symbol: resolvedSymbol,
-          company_name: resolvedCompany,
-          source: c.source,
+        const attachmentTextStored = attachment_text || "Content from Cache";
+        // Only include columns that exist on analyzed_events to avoid Supabase 400 (PGRST102)
+        const payload: Record<string, unknown> = {
+          event_date: c.event_date || null,
+          symbol: String(resolvedSymbol ?? ''),
+          company_name: String(resolvedCompany ?? 'Unknown'),
+          source: c.source || 'XBRL',
           event_family: familyForScoring,
-          summary: aiResult.summary,
-          impact_score: scoring.impact_score,
-          action_recommendation: scoring.recommendation,
-          extracted_json: aiResult.extracted,
-          attachment_link: c.attachment_link,
-          attachment_text: attachment_text || "Content from Cache",
+          summary: String(aiResult.summary || ''),
+          impact_score: Number(scoring.impact_score) || 0,
+          action_recommendation: scoring.recommendation || 'TRACK',
+          extracted_json: aiResult.extracted && typeof aiResult.extracted === 'object' ? aiResult.extracted : {},
+          attachment_link: c.attachment_link ?? null,
+          attachment_text: typeof attachmentTextStored === 'string' ? attachmentTextStored.substring(0, 500000) : '',
           event_fingerprint: fingerprint,
-          confidence: aiResult.confidence,
-          direction: scoring.direction,
-          source_link: c.link,
-          stage: aiResult.extracted.stage,
-          evidence_spans: aiResult.evidence_spans,
-          missing_fields: aiResult.missing_fields,
-          scoring_factors: scoring.factors,
-          conversion_bonus: scoring.conversion_bonus,
-          execution_months: scoring.final_execution_months,
-          order_type: scoring.order_type,
+          confidence: Number(aiResult.confidence) || 0,
+          direction: scoring.direction || 'NEUTRAL',
+          source_link: c.link ?? null,
+          stage: (aiResult.extracted && aiResult.extracted.stage) ?? null,
+          evidence_spans: Array.isArray(aiResult.evidence_spans) ? aiResult.evidence_spans : [],
+          missing_fields: Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
+          scoring_factors: Array.isArray(scoring.factors) ? scoring.factors : [],
           ...analysisPayload
         };
+        const cleanPayload: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(payload)) {
+          if (v !== undefined) cleanPayload[k] = v;
+        }
 
-        const { data: report, error: upsertError } = await supabase.from('analyzed_events').upsert(payload, { onConflict: 'event_fingerprint' }).select().single();
+        const { data: report, error: upsertError } = await supabase.from('analyzed_events').upsert(cleanPayload, { onConflict: 'event_fingerprint' }).select().single();
         if (upsertError) {
+          console.error('[Reg30] Supabase upsert failed:', upsertError.message, upsertError.details, upsertError.hint);
           onRowProgress(c.id, 'FAILED');
         } else {
           if (report) reports.push(report as any);
