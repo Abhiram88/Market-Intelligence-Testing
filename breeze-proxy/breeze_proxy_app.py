@@ -903,6 +903,58 @@ def parse_attachment():
         return jsonify({"error": str(e), "text": ""}), 500
 
 
+@app.route('/api/gemini/reg30-analyze', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def reg30_analyze():
+    """Run Reg30 event analysis with Gemini (so frontend does not need a Gemini API key)."""
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
+    initialize_ai_clients()
+    if not ai_client:
+        return jsonify({"error": "Gemini AI client not initialized"}), 500
+    try:
+        data = request.get_json(silent=True) or {}
+        candidate = data.get('candidate') or {}
+        attachment_text = (data.get('attachment_text') or '')[:30000]
+        company_name = candidate.get('company_name') or 'Unknown'
+        symbol = candidate.get('symbol') or ''
+        source = candidate.get('source') or 'XBRL'
+        raw_text = candidate.get('raw_text') or ''
+        prompt = f"""Perform a forensic extraction on this NSE disclosure:
+Company: {company_name}
+Symbol: {symbol}
+Source: {source}
+Context: {raw_text}
+
+Document Text: {attachment_text}
+
+Return STRICT JSON only with these keys: summary (string), impact_score (integer 0-100), recommendation (one of: ACTIONABLE_BULLISH, ACTIONABLE_BEARISH_RISK, HIGH_PRIORITY_WATCH, TRACK, NEEDS_MANUAL_REVIEW, IGNORE), confidence (number 0-1), missing_fields (array of strings), evidence_spans (array of strings, max 160 chars each), extracted (object with optional keys: order_value_cr, stage, international, new_customer, execution_months, execution_years, order_type, end_date, conditionality, rating_action, notches, outlook_change, amount_cr, stage_legal, ops_impact, customer)."""
+        sys_instr = (
+            "You are an expert Indian equity events analyst focused on NSE Regulation 30–style disclosures and order-pipeline events. "
+            "You ONLY summarize and extract structured data from provided text. You do NOT browse the web. "
+            "NEVER fabricate numbers or facts. If not present, output null and add the field name to missing_fields. "
+            "Use only provided raw_text/attachment_text. CURRENCY: Convert raw INR to Crore (CR). 1 CR = 10,000,000 INR. "
+            "STAGE must be one of: L1, LOA, WO, NTP, MOU, OTHER. Output MUST be STRICT JSON only."
+        )
+        for model_name in get_gemini_model_candidates():
+            try:
+                response = ai_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(system_instruction=sys_instr),
+                )
+                result = extract_json(response.text)
+                if result and isinstance(result.get('summary'), str):
+                    return jsonify(result)
+            except Exception as e:
+                logger.warning(f"Reg30 analyze ({model_name}): {e}")
+                continue
+        return jsonify({"error": "Reg30 analysis failed"}), 500
+    except Exception as e:
+        logger.exception("Reg30 analyze error")
+        return jsonify({"error": str(e)}), 500
+
+
 # ─────────────────────────────────────────────
 # SOCKET.IO HANDLERS
 # ─────────────────────────────────────────────

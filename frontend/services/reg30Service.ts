@@ -4,10 +4,40 @@ import {
   Reg30Source, 
   Reg30EventFamily, 
   Sentiment, 
-  ActionRecommendation 
+  ActionRecommendation,
+  Reg30Analysis
 } from "../types";
 import { analyzeReg30Event, analyzeEventNarrative } from "./reg30GeminiService";
 import { supabase } from "../lib/supabase";
+
+/** Call proxy to run Reg30 Gemini analysis (no API key needed in frontend). */
+async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg30Analysis | null> {
+  try {
+    const res = await fetch(resolveBreezeUrl('/api/gemini/reg30-analyze'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        candidate: {
+          company_name: candidate.company_name,
+          symbol: candidate.symbol,
+          source: candidate.source,
+          raw_text: candidate.raw_text,
+        },
+        attachment_text: candidate.attachment_text || '',
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || res.statusText);
+    }
+    const data = await res.json();
+    if (!data || typeof data.summary !== 'string') return null;
+    return data as Reg30Analysis;
+  } catch (e) {
+    console.error('Reg30 proxy analysis failed:', e);
+    return null;
+  }
+}
 
 /**
  * PROXY RESOLUTION
@@ -283,7 +313,7 @@ export const runReg30Analysis = async (
       if (!aiResult) {
         attachment_text = await fetchAttachmentText(c.attachment_link || "");
         onRowProgress(c.id, 'AI_ANALYZING');
-        aiResult = await analyzeReg30Event({ ...c, attachment_text });
+        aiResult = await analyzeReg30EventViaProxy({ ...c, attachment_text }) ?? await analyzeReg30Event({ ...c, attachment_text });
         if (aiResult) {
           try {
             await supabase.from('gemini_cache').upsert({ cache_key: cacheKey, response_json: aiResult });
@@ -387,7 +417,7 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
     raw_text: report.summary, attachment_text: attachment_text, link: report.link,
     attachment_link: report.attachment_link, event_family: report.event_family
   };
-  const aiResult = await analyzeReg30Event(candidate);
+  const aiResult = await analyzeReg30EventViaProxy(candidate) ?? await analyzeReg30Event(candidate);
   if (aiResult) {
     const scoring = calculateScoreAndRecommendation(report.event_family, aiResult.extracted, aiResult.confidence, report.event_date);
     
