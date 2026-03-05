@@ -89,9 +89,9 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
       throw new Error(errorType);
     }
   }
-  // 3. Market Closed Strategy — only use cache when market is closed
+  // 3. Market Closed — never return cached/static data; trading app shows live only or "Market closed"
   else {
-    return { ...(await fetchLastKnownNiftyClose()), dataSource: 'Cache', errorType: 'none' };
+    throw new Error('market_closed');
   }
 };
 

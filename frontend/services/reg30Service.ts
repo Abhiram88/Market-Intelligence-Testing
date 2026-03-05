@@ -516,6 +516,26 @@ const splitCsvLine = (line: string): string[] => {
   return result;
 };
 
+/** Build EventCandidate[] from XBRL/iXBRL URLs (one per row). Used by the XBRL links modal. */
+export const candidatesFromXbrlUrls = (urlLines: string[]): EventCandidate[] => {
+  const today = new Date().toISOString().split('T')[0];
+  return urlLines
+    .map(l => l.trim())
+    .filter(l => l.length > 0 && (l.startsWith('http://') || l.startsWith('https://')))
+    .map((url, i) => ({
+      id: getStringHash(`xbrl-url-${url}-${i}`),
+      source: 'XBRL' as Reg30Source,
+      event_date: today,
+      symbol: null,
+      company_name: 'Unknown',
+      category: 'XBRL',
+      raw_text: `XBRL link: ${url}`,
+      attachment_link: url,
+      event_family: 'OTHER' as Reg30EventFamily,
+      link: url,
+    }));
+};
+
 export const parseNseCsv = (text: string, source: Reg30Source): EventCandidate[] => {
   const cleanText = text.replace(/^﻿/, '').replace(/\r/g, '');
   const lines = cleanText.split('\n').filter(l => l.trim().length > 0);

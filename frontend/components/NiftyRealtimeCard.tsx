@@ -104,8 +104,14 @@ export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry,
             </div>
           </>
         ) : (
-          <div className="h-48 flex items-center justify-center text-slate-500">
-            <p>{isLoading ? 'Loading...' : 'No data available'}</p>
+          <div className="h-48 flex flex-col items-center justify-center text-slate-500">
+            {isLoading ? (
+              <p>Connecting to live feed…</p>
+            ) : !getMarketSessionStatus().isOpen ? (
+              <p className="text-center text-slate-400 font-medium">Market closed — connect when market opens for live data</p>
+            ) : (
+              <p>No data available</p>
+            )}
           </div>
         )}
       </div>

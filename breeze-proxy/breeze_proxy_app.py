@@ -540,6 +540,9 @@ def analyze_stock():
     if request.method == 'OPTIONS':
         return jsonify(success=True)
 
+    from datetime import datetime, timedelta
+    import math
+
     initialize_ai_clients()
     if not ai_client:
         return jsonify({"error": "Gemini AI client not initialized"}), 500
@@ -548,54 +551,356 @@ def analyze_stock():
     symbol = (data.get('symbol') or '').strip().upper()
     if not symbol:
         return jsonify({"error": "Missing required field: symbol"}), 400
+
     date = data.get('date', str(get_ist_now().date()))
+
+    # Clamp future/invalid dates to today
+    try:
+        req_date = datetime.strptime(date, "%Y-%m-%d").date()
+        today = get_ist_now().date()
+        if req_date > today:
+            date = str(today)
+            req_date = today
+    except Exception:
+        date = str(get_ist_now().date())
+        req_date = get_ist_now().date()
+
+    # ---------- Helpers ----------
+    def _safe_float(x):
+        try:
+            if x is None or x == "":
+                return None
+            return float(x)
+        except Exception:
+            return None
+
+    def _get(row, *keys):
+        for k in keys:
+            if isinstance(row, dict) and k in row and row[k] not in (None, ""):
+                return row[k]
+        return None
+
+    def ema(series, period):
+        if not series or len(series) < period:
+            return None
+        k = 2 / (period + 1.0)
+        e = series[0]
+        for val in series[1:]:
+            e = (val * k) + (e * (1 - k))
+        return e
+
+    def rsi(series, period=14):
+        if not series or len(series) < period + 1:
+            return None
+        gains, losses = [], []
+        for i in range(1, len(series)):
+            d = series[i] - series[i - 1]
+            gains.append(max(d, 0.0))
+            losses.append(max(-d, 0.0))
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        for i in range(period, len(gains)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100.0 - (100.0 / (1.0 + rs))
+
+    def atr(highs, lows, closes, period=14):
+        if not closes or len(closes) < period + 1:
+            return None
+        trs = []
+        for i in range(1, len(closes)):
+            tr = max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i - 1]),
+                abs(lows[i] - closes[i - 1]),
+            )
+            trs.append(tr)
+        a = sum(trs[:period]) / period
+        for i in range(period, len(trs)):
+            a = (a * (period - 1) + trs[i]) / period
+        return a
+
+    def normalize_result(result):
+        """
+        Hard consistency rules so UI doesn't show bullish + avoid/sell without MIXED.
+        """
+        try:
+            sr = result.get("swing_recommendation") or {}
+            action = (sr.get("action") or "").upper().strip()
+            sentiment = (result.get("sentiment") or "").upper().strip()
+
+            if action in ("SELL", "AVOID") and sentiment == "BULLISH":
+                result["sentiment"] = "MIXED"
+            if action == "BUY" and sentiment == "BEARISH":
+                result["sentiment"] = "MIXED"
+
+            # If we had to change sentiment, make sure category isn't lying
+            if result.get("sentiment") == "MIXED" and result.get("category") in ("SECTOR_TAILWIND", "EARNINGS", "ORDER_WIN"):
+                # keep as-is, but MIXED is allowed; no forced overwrite
+                pass
+
+            return result
+        except Exception:
+            return result
+
+    # ---------- Pull OHLC + LTP/Quote ----------
+    ohlc_block = ""
+    tech_ok = False
+
+    last_close = None
+    ltp = None
+    prev_close = None
+
+    try:
+        client, err_resp, status_code = ensure_breeze_session()
+        if err_resp:
+            client = None
+
+        # 1) Quotes/LTP (works even when market is closed; gives last traded/last available)
+        if client:
+            quote_res = None
+            # Try common Breeze quote methods defensively
+            for fn_name in ("get_quotes", "get_quote", "get_market_data", "get_stock_quote"):
+                if hasattr(client, fn_name):
+                    try:
+                        fn = getattr(client, fn_name)
+                        # Different SDKs have different arg names; try safest patterns
+                        try:
+                            quote_res = fn(stock_code=symbol, exchange_code="NSE", product_type="cash")
+                        except TypeError:
+                            try:
+                                quote_res = fn(stock_code=symbol, exchange_code="NSE")
+                            except TypeError:
+                                quote_res = fn(symbol)
+                        break
+                    except Exception:
+                        continue
+
+            # Normalize quote payload
+            q = None
+            if isinstance(quote_res, dict):
+                if "Success" in quote_res:
+                    s = quote_res.get("Success")
+                    if isinstance(s, list) and s:
+                        q = s[0]
+                    elif isinstance(s, dict):
+                        q = s
+                else:
+                    q = quote_res
+
+            if isinstance(q, dict):
+                ltp = _safe_float(_get(q, "ltp", "LTP", "last_traded_price", "LastTradedPrice", "last"))
+                prev_close = _safe_float(_get(q, "previous_close", "PrevClose", "prev_close", "previousClose", "close"))
+                last_close = prev_close  # keep a baseline
+
+        # 2) Historical candles to compute indicators
+        candles = []
+        if client:
+            to_date = req_date
+            from_date = to_date - timedelta(days=180)
+            res = client.get_historical_data(
+                stock_code=symbol,
+                exchange_code="NSE",
+                product_type="cash",
+                from_date=str(from_date),
+                to_date=str(to_date),
+                interval="1day"
+            )
+
+            rows = []
+            if isinstance(res, dict) and "Success" in res:
+                rows = res.get("Success") or []
+            elif isinstance(res, list):
+                rows = res
+            else:
+                normalized = normalize_breeze_response(res)
+                if normalized:
+                    rows = normalized
+
+            for r in (rows or []):
+                o = _safe_float(_get(r, "open", "Open", "OPEN"))
+                h = _safe_float(_get(r, "high", "High", "HIGH"))
+                l = _safe_float(_get(r, "low", "Low", "LOW"))
+                c = _safe_float(_get(r, "close", "Close", "CLOSE"))
+                v = _safe_float(_get(r, "volume", "Volume", "VOLUME"))
+                if None not in (o, h, l, c):
+                    candles.append({"open": o, "high": h, "low": l, "close": c, "volume": v})
+
+        if len(candles) >= 60:
+            closes = [x["close"] for x in candles]
+            highs = [x["high"] for x in candles]
+            lows = [x["low"] for x in candles]
+            vols = [x["volume"] for x in candles]
+
+            last_close = closes[-1]  # authoritative from candles
+            ema20 = ema(closes[-60:], 20)
+            ema50 = ema(closes[-120:], 50) if len(closes) >= 120 else ema(closes, 50)
+            rsi14 = rsi(closes, 14)
+            atr14 = atr(highs, lows, closes, 14)
+
+            lookback20 = closes[-20:]
+            high20 = max(lookback20) if lookback20 else None
+            low20 = min(lookback20) if lookback20 else None
+
+            trend = "UPTREND" if (ema20 and ema50 and last_close > ema20 and ema20 > ema50) else \
+                    "DOWNTREND" if (ema20 and ema50 and last_close < ema20 and ema20 < ema50) else "MIXED"
+
+            vol_signal = "UNAVAILABLE"
+            valid_vols = [v for v in vols[-30:] if isinstance(v, (int, float)) and v is not None and not math.isnan(v)]
+            if len(valid_vols) >= 20 and vols[-1] is not None:
+                avg20v = sum(valid_vols[-20:]) / 20
+                vol_signal = "ABOVE_AVG" if vols[-1] > avg20v * 1.1 else "BELOW_AVG" if vols[-1] < avg20v * 0.9 else "NEAR_AVG"
+
+            tech_ok = True
+
+            ohlc_block = f"""
+MARKET_SNAPSHOT (Breeze):
+- last_close: {round(last_close, 2)}
+- ltp: {round(ltp, 2) if ltp is not None else None}
+- prev_close: {round(prev_close, 2) if prev_close is not None else None}
+
+OHLC_TECHNICALS (computed from Breeze daily candles, recent ~6M):
+- ema20: {round(ema20, 2) if ema20 is not None else None}
+- ema50: {round(ema50, 2) if ema50 is not None else None}
+- rsi14: {round(rsi14, 2) if rsi14 is not None else None}
+- atr14: {round(atr14, 2) if atr14 is not None else None}
+- 20d_high_close: {round(high20, 2) if high20 is not None else None}
+- 20d_low_close: {round(low20, 2) if low20 is not None else None}
+- trend: {trend}
+- volume_signal: {vol_signal}
+
+HARD RULES FOR SWING CALL:
+- You MUST derive swing_recommendation from OHLC_TECHNICALS + MARKET_SNAPSHOT.
+- If OHLC_TECHNICALS exists, you MUST NOT say "insufficient technical data".
+- Use invalidation as a level: below ema20 or below 20d_low_close or ATR-based (e.g., entry - 1.5*ATR).
+"""
+        else:
+            # Even if candles fail, still provide snapshot so model doesn't claim "no data" if LTP exists
+            ohlc_block = f"""
+MARKET_SNAPSHOT (Breeze):
+- last_close: {round(last_close, 2) if last_close is not None else None}
+- ltp: {round(ltp, 2) if ltp is not None else None}
+- prev_close: {round(prev_close, 2) if prev_close is not None else None}
+
+NOTE:
+- OHLC candles were not sufficient to compute indicators. Swing recommendation must be conservative (HOLD/AVOID) and explain missing candles.
+"""
+    except Exception as e:
+        logger.warning(f"OHLC/quote fetch failed for {symbol}: {e}")
+        ohlc_block = ""
 
     sys_instr = (
         "You are a Senior Equity Analyst specializing in Indian Equities. "
-        "Perform a forensic audit of a specific stock based on recent news and market data."
+        "You MUST be factual and internally consistent. "
+        "If you are not able to verify a claim from reliable, recent sources, you must say so and omit it. "
+        "Never invent analyst ratings/targets. Never use the word 'hypothetical'. "
+        "All outputs must follow the JSON schema exactly."
     )
 
-    prompt = f"""As a Senior Equity Analyst, perform a FORENSIC AUDIT for the NSE stock symbol: {symbol} for the date: {date}.
+    prompt = f"""
+As a Senior Equity Analyst, perform a FORENSIC AUDIT for the NSE stock symbol: {symbol} for the date: {date}.
+
+{ohlc_block}
+
+CRITICAL DATA RULES (MUST FOLLOW):
+- Use only RECENT information (prefer last 30 days from {date}; max 90 days if needed and clearly label it).
+- Do NOT fabricate news, events, prices, analyst calls, targets, or broker names.
+- Never use the word "hypothetical".
+- Prefer authoritative sources (NSE filings/announcements, company disclosures, major financial media).
+- Brokerage/analyst calls: only include if publicly verifiable with a working source_url.
+
+CONSISTENCY RULES (MUST FOLLOW):
+- headline + narrative + sentiment + swing_recommendation MUST NOT contradict each other.
+- If OHLC_TECHNICALS exists, swing_recommendation MUST be derived from it and MUST reference at least 2 indicators (e.g., ema20/ema50, rsi14, atr14, 20d levels).
+- If fundamentals/news are bullish but technical swing setup is bearish (or vice-versa), set sentiment to "MIXED" and explain the divergence in narrative.
+
 OBJECTIVES:
-1. Determine the price movement drivers for {symbol} based on recent news.
-2. Find specific reasons for recent moves (Earnings, Order Wins, Corporate Actions, Sectoral pressure, etc.).
-3. Obtain at least 2-3 recent analyst recommendations (calls) from reputable financial sources. Include Rating and Target Price.
-4. Synthesize a 300+ word causal narrative explaining the outlook.
-5. Provide a swing trading recommendation (1 day to 1 month) based on the current setup.
-6. Provide a punchy headline and sentiment bias.
+1) Identify primary price movement drivers for {symbol} based on verified recent news/events (include dates + why it mattered).
+2) Provide 3–6 driver facts inside the narrative.
+3) Analyst calls: only real, attributable calls with source_url; otherwise return analyst_calls: [].
+4) Write a 300+ word causal narrative with risks + what to watch next 1–4 weeks.
+5) Provide a swing trading recommendation (1D–1M) based on OHLC_TECHNICALS and MARKET_SNAPSHOT.
 
 OUTPUT RULES:
-Return the response in STRICT JSON format with keys: headline, narrative, category, sentiment, impact_score, swing_recommendation, affected_stocks, affected_sectors, analyst_calls."""
+Return STRICT JSON with EXACT keys:
+headline, narrative, category, sentiment, impact_score, swing_recommendation, affected_stocks, affected_sectors, analyst_calls
 
-    # Try without Google Search first (avoids 500 in regions where grounding is restricted)
+NOW PRODUCE THE JSON ONLY. No extra text.
+"""
+
     last_err = None
+
+    # Grounded web first
     for model_name in get_gemini_model_candidates():
         try:
             response = ai_client.models.generate_content(
                 model=model_name,
                 contents=prompt,
-                config=types.GenerateContentConfig(system_instruction=sys_instr),
+                config=types.GenerateContentConfig(
+                    system_instruction=sys_instr,
+                    tools=[{"google_search": {}}],
+                    temperature=0.2,
+                    top_p=0.9,
+                ),
             )
             result = extract_json(response.text)
             if result:
+                result = normalize_result(result)
                 return jsonify(result)
         except Exception as e:
             last_err = e
-            logger.warning(f"Stock deep-dive no-tools ({model_name}): {e}")
+            logger.warning(f"Stock deep-dive grounded ({model_name}): {e}")
             continue
 
-    # Fallback: try with Google Search (may work in some regions)
+    # Fallback helper
     try:
         response, _ = generate_with_model_fallback(prompt, sys_instr)
         result = extract_json(response.text)
         if result:
+            result = normalize_result(result)
             return jsonify(result)
     except Exception as e:
         last_err = e
-        logger.warning(f"Stock deep-dive with tools failed: {e}")
+        logger.warning(f"Stock deep-dive fallback failed: {e}")
 
     err_msg = str(last_err) if last_err else "No model succeeded"
     return jsonify({"error": f"Equity deep dive failed. {err_msg}"}), 500
+
+
+@app.route('/api/attachment/parse', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def parse_attachment():
+    """Fetch a URL (e.g. NSE iXBRL) and return extracted text for Reg30 analysis."""
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
+    try:
+        import requests as req
+        data = request.get_json(silent=True) or {}
+        url = (data.get('url') or '').strip()
+        if not url or not url.startswith('http'):
+            return jsonify({"error": "Missing or invalid url"}), 400
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+        if 'nseindia.com' in url or 'nsearchives.nseindia.com' in url:
+            headers['Referer'] = 'https://www.nseindia.com/'
+        r = req.get(url, headers=headers, timeout=30)
+        r.raise_for_status()
+        html = r.text
+        # Strip tags and collapse whitespace for text extraction
+        text = re.sub(r'<script[^>]*>[\s\S]*?</script>', ' ', html, flags=re.IGNORECASE)
+        text = re.sub(r'<style[^>]*>[\s\S]*?</style>', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return jsonify({"text": text[:100000] if text else ""})
+    except Exception as e:
+        logger.warning(f"Attachment parse failed: {e}")
+        return jsonify({"error": str(e), "text": ""}), 500
 
 
 # ─────────────────────────────────────────────

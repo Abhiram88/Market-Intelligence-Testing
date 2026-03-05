@@ -13,10 +13,13 @@ import {
   Search,
   Trash2,
   Bookmark,
-  Star
+  Star,
+  X,
+  Link
 } from 'lucide-react';
 import { 
   parseNseCsv, 
+  candidatesFromXbrlUrls,
   runReg30Analysis, 
   fetchAnalyzedEvents,
   clearReg30History,
@@ -38,6 +41,10 @@ const Reg30Tab: React.FC = () => {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [bookmarkedSymbols, setBookmarkedSymbols] = useState<Set<string>>(new Set());
   const [reAnalyzingId, setReAnalyzingId] = useState<string | null>(null);
+  const [xbrlModalOpen, setXbrlModalOpen] = useState(false);
+  const [xbrlLinksText, setXbrlLinksText] = useState('');
+  const [xbrlProcessing, setXbrlProcessing] = useState(false);
+  const [xbrlStatus, setXbrlStatus] = useState<string | null>(null);
   
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -96,6 +103,34 @@ const Reg30Tab: React.FC = () => {
     } finally {
       setIsProcessing(false);
       setProcessingStatus(null);
+    }
+  };
+
+  const handleXbrlLinksSubmit = async () => {
+    const lines = xbrlLinksText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const linkCandidates = candidatesFromXbrlUrls(lines);
+    if (linkCandidates.length === 0) return;
+    setXbrlProcessing(true);
+    setXbrlStatus(`Processing ${linkCandidates.length} link(s)...`);
+    try {
+      const newReports = await runReg30Analysis(linkCandidates, (id, step) => {
+        const idx = linkCandidates.findIndex(c => c.id === id);
+        if (idx !== -1) setXbrlStatus(`Link ${idx + 1}/${linkCandidates.length}: ${step}`);
+      });
+      setReports(prev => {
+        const existingIds = new Set(prev.map(r => r.id));
+        const uniqueNew = newReports.filter(r => !existingIds.has(r.id));
+        return [...uniqueNew, ...prev];
+      });
+      setCurrentPage(1);
+      setXbrlLinksText('');
+      setXbrlModalOpen(false);
+    } catch (err) {
+      console.error("XBRL links analysis failed:", err);
+      setXbrlStatus(`Error: ${(err as Error)?.message || 'Failed'}`);
+    } finally {
+      setXbrlProcessing(false);
+      setXbrlStatus(null);
     }
   };
 
@@ -206,7 +241,16 @@ const Reg30Tab: React.FC = () => {
           <CardContent className="p-6">
             <h3 className="text-lg font-bold text-slate-900 mb-6 uppercase tracking-tight">Daily NSE CSV Analysis</h3>
             <div className="grid grid-cols-3 gap-4 mb-6">
-              {['XBRL', 'CorpAction', 'CreditRating'].map((src) => (
+              <button
+                type="button"
+                onClick={() => setXbrlModalOpen(true)}
+                className="border-2 border-dashed border-indigo-200 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-indigo-50 transition-colors h-32"
+              >
+                <Link className="w-6 h-6 text-indigo-500 mb-2" />
+                <span className="text-[10px] font-bold text-indigo-600 uppercase text-center">Add XBRL links</span>
+                <span className="text-[9px] text-slate-400 mt-1">One URL per line</span>
+              </button>
+              {['CorpAction', 'CreditRating'].map((src) => (
                 <label key={src} className="border-2 border-dashed border-slate-200 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors h-32">
                   <Upload className="w-6 h-6 text-slate-400 mb-2" />
                   <span className="text-[10px] font-bold text-slate-600 uppercase text-center">Upload {src}</span>
@@ -447,6 +491,47 @@ const Reg30Tab: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* XBRL links modal */}
+      {xbrlModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => !xbrlProcessing && setXbrlModalOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col border border-slate-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900 uppercase tracking-tight">Add XBRL / iXBRL links</h3>
+              <button type="button" onClick={() => !xbrlProcessing && setXbrlModalOpen(false)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-500">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 flex-1 overflow-hidden flex flex-col gap-4">
+              <p className="text-sm text-slate-600">
+                Paste one NSE iXBRL or XBRL link per line. Each link will be fetched, analyzed with Gemini for impact_score, and saved to the ledger.
+              </p>
+              <textarea
+                value={xbrlLinksText}
+                onChange={e => setXbrlLinksText(e.target.value)}
+                placeholder={`https://nsearchives.nseindia.com/corporate/ixbrl/ANN_AWARD_BAGGING_144841_05032026193733_iXBRL_WEB.html\nhttps://nsearchives.nseindia.com/corporate/...`}
+                className="w-full h-48 p-4 rounded-xl border border-slate-200 font-mono text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                disabled={xbrlProcessing}
+              />
+              {xbrlStatus && <p className="text-xs font-medium text-slate-500">{xbrlStatus}</p>}
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+              <button type="button" onClick={() => !xbrlProcessing && setXbrlModalOpen(false)} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium text-sm">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleXbrlLinksSubmit}
+                disabled={xbrlProcessing || !xbrlLinksText.trim()}
+                className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm uppercase tracking-wide hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {xbrlProcessing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Link className="w-4 h-4" />}
+                {xbrlProcessing ? 'Processing…' : 'Process links'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
