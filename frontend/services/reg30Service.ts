@@ -32,7 +32,17 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
     }
     const data = await res.json();
     if (!data || typeof data.summary !== 'string') return null;
-    return data as Reg30Analysis;
+    // Proxy returns extraction-only schema (summary, direction_hint, confidence, extracted, evidence_spans, missing_fields).
+    // Impact and recommendation are computed by calculateScoreAndRecommendation in the pipeline.
+    return {
+      summary: data.summary,
+      impact_score: typeof data.impact_score === 'number' ? data.impact_score : 0,
+      recommendation: (data.recommendation as Reg30Analysis['recommendation']) || 'TRACK',
+      confidence: typeof data.confidence === 'number' ? data.confidence : 0,
+      missing_fields: Array.isArray(data.missing_fields) ? data.missing_fields : [],
+      evidence_spans: Array.isArray(data.evidence_spans) ? data.evidence_spans : [],
+      extracted: data.extracted && typeof data.extracted === 'object' ? data.extracted : {},
+    } as Reg30Analysis;
   } catch (e) {
     console.error('Reg30 proxy analysis failed:', e);
     return null;
@@ -134,10 +144,17 @@ const calculateScoreAndRecommendation = (
       direction = 'POSITIVE';
       addFactor(family === 'ORDER_CONTRACT' ? 20 : 15, `Base weight for ${family.replace('_', ' ')}`);
       
-      if (extracted.order_value_cr) {
-        const val = extracted.order_value_cr;
-        const absoluteBonus = val >= 1000 ? 30 : val >= 500 ? 20 : val >= 100 ? 10 : 5;
-        addFactor(absoluteBonus, `Value bonus (₹${val} Cr)`);
+      const orderCr = extracted.order_value_cr;
+      const marketCapCr = extracted.market_cap_cr;
+      if (orderCr != null && orderCr > 0) {
+        if (marketCapCr != null && marketCapCr > 0) {
+          const ratio = orderCr / marketCapCr;
+          const ratioBonus = ratio >= 0.15 ? 25 : ratio >= 0.08 ? 18 : ratio >= 0.03 ? 12 : ratio >= 0.01 ? 6 : 2;
+          addFactor(ratioBonus, `Order vs market cap ${(ratio * 100).toFixed(2)}% (₹${orderCr} Cr / ₹${marketCapCr} Cr)`);
+        } else {
+          const absoluteBonus = orderCr >= 1000 ? 30 : orderCr >= 500 ? 20 : orderCr >= 100 ? 10 : 5;
+          addFactor(absoluteBonus, `Value bonus (₹${orderCr} Cr)`);
+        }
       } else {
         addFactor(-10, "Order value missing");
       }
@@ -323,6 +340,9 @@ export const runReg30Analysis = async (
 
       if (aiResult) {
         onRowProgress(c.id, 'SAVING');
+        const ext = aiResult.extracted || {};
+        const resolvedSymbol = ext.nse_symbol ?? ext.symbol ?? c.symbol;
+        const resolvedCompany = ext.company_name ?? c.company_name;
         const scoring = calculateScoreAndRecommendation(c.event_family!, aiResult.extracted, aiResult.confidence, c.event_date);
         
         let analysisPayload: any = {};
@@ -334,7 +354,7 @@ export const runReg30Analysis = async (
             extracted_data: aiResult.extracted
           });
           
-          const narrativeCacheKey = getStringHash(`narrative_v2|${c.symbol}|${c.event_date}|${det.tactical_plan}`);
+          const narrativeCacheKey = getStringHash(`narrative_v2|${resolvedSymbol}|${c.event_date}|${det.tactical_plan}`);
           let narrativeData = null;
           try {
             const { data: narrativeCached } = await supabase.from('gemini_cache').select('response_json').eq('cache_key', narrativeCacheKey).maybeSingle();
@@ -343,7 +363,7 @@ export const runReg30Analysis = async (
           
           if (!narrativeData) {
             narrativeData = await analyzeEventNarrative({
-              symbol: c.symbol,
+              symbol: resolvedSymbol,
               event_family: c.event_family,
               stage: aiResult.extracted.stage,
               order_value_cr: aiResult.extracted.order_value_cr,
@@ -364,12 +384,12 @@ export const runReg30Analysis = async (
           };
         }
 
-        const fingerprint = getStringHash(`${c.symbol}|${c.company_name}|${c.event_date}|${aiResult.summary.substring(0, 30)}|${c.id}`);
+        const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${c.event_date}|${aiResult.summary.substring(0, 30)}|${c.id}`);
         
         const payload = {
           event_date: c.event_date,
-          symbol: c.symbol,
-          company_name: c.company_name,
+          symbol: resolvedSymbol,
+          company_name: resolvedCompany,
           source: c.source,
           event_family: c.event_family,
           summary: aiResult.summary,
@@ -419,6 +439,9 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
   };
   const aiResult = await analyzeReg30EventViaProxy(candidate) ?? await analyzeReg30Event(candidate);
   if (aiResult) {
+    const ext = aiResult.extracted || {};
+    const resolvedSymbol = ext.nse_symbol ?? ext.symbol ?? report.symbol;
+    const resolvedCompany = ext.company_name ?? report.company_name;
     const scoring = calculateScoreAndRecommendation(report.event_family, aiResult.extracted, aiResult.confidence, report.event_date);
     
     let analysisPayload: any = {};
@@ -430,7 +453,7 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
         extracted_data: aiResult.extracted
       });
       const narrativeData = await analyzeEventNarrative({
-        symbol: report.symbol,
+        symbol: resolvedSymbol,
         event_family: report.event_family,
         stage: aiResult.extracted.stage,
         order_value_cr: aiResult.extracted.order_value_cr,
@@ -445,6 +468,8 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
     }
 
     const { data: updated } = await supabase.from('analyzed_events').update({
+      symbol: resolvedSymbol,
+      company_name: resolvedCompany,
       summary: aiResult.summary, impact_score: scoring.impact_score, action_recommendation: scoring.recommendation,
       extracted_json: aiResult.extracted, attachment_text: attachment_text, confidence: aiResult.confidence,
       direction: scoring.direction, stage: aiResult.extracted.stage, evidence_spans: aiResult.evidence_spans,

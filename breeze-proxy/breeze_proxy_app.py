@@ -906,7 +906,7 @@ def parse_attachment():
 @app.route('/api/gemini/reg30-analyze', methods=['POST', 'OPTIONS'])
 @cross_origin()
 def reg30_analyze():
-    """Run Reg30 event analysis with Gemini (so frontend does not need a Gemini API key)."""
+    """Run Reg30 event analysis with Gemini. Extraction only; impact scoring is done in frontend."""
     if request.method == 'OPTIONS':
         return jsonify(success=True)
     initialize_ai_clients()
@@ -915,26 +915,40 @@ def reg30_analyze():
     try:
         data = request.get_json(silent=True) or {}
         candidate = data.get('candidate') or {}
-        attachment_text = (data.get('attachment_text') or '')[:30000]
+        attachment_text = (data.get('attachment_text') or '').strip()[:30000]
+        if len(attachment_text) < 100:
+            return jsonify({
+                "error": "Document text empty or too short. The link could not be fetched or the page has no extractable content. Check the URL or try again later."
+            }), 400
         company_name = candidate.get('company_name') or 'Unknown'
         symbol = candidate.get('symbol') or ''
         source = candidate.get('source') or 'XBRL'
         raw_text = candidate.get('raw_text') or ''
-        prompt = f"""Perform a forensic extraction on this NSE disclosure:
-Company: {company_name}
-Symbol: {symbol}
-Source: {source}
-Context: {raw_text}
-
-Document Text: {attachment_text}
-
-Return STRICT JSON only with these keys: summary (string), impact_score (integer 0-100), recommendation (one of: ACTIONABLE_BULLISH, ACTIONABLE_BEARISH_RISK, HIGH_PRIORITY_WATCH, TRACK, NEEDS_MANUAL_REVIEW, IGNORE), confidence (number 0-1), missing_fields (array of strings), evidence_spans (array of strings, max 160 chars each), extracted (object with optional keys: order_value_cr, stage, international, new_customer, execution_months, execution_years, order_type, end_date, conditionality, rating_action, notches, outlook_change, amount_cr, stage_legal, ops_impact, customer)."""
+        prompt = (
+            "Perform a forensic extraction on this NSE disclosure:\n"
+            f"Company: {company_name}\n"
+            f"Symbol: {symbol}\n"
+            f"Source: {source}\n"
+            f"Context: {raw_text}\n\n"
+            f"Document Text: {attachment_text}\n\n"
+            "Return STRICT JSON only with these keys: summary (string), direction_hint (one of: POSITIVE, NEGATIVE, NEUTRAL), "
+            "confidence (number 0-1), missing_fields (array of strings), evidence_spans (array of strings, max 160 chars each), "
+            "extracted (object with: symbol, company_name, order_value_cr, stage, execution_months, execution_years, end_date, "
+            "order_type, customer, international, new_customer, conditionality, rating_action, notches, outlook_change, "
+            "amount_cr, stage_legal, ops_impact; and when present in document: nse_symbol, market_cap_cr)."
+        )
         sys_instr = (
             "You are an expert Indian equity events analyst focused on NSE Regulation 30–style disclosures and order-pipeline events. "
-            "You ONLY summarize and extract structured data from provided text. You do NOT browse the web. "
-            "NEVER fabricate numbers or facts. If not present, output null and add the field name to missing_fields. "
-            "Use only provided raw_text/attachment_text. CURRENCY: Convert raw INR to Crore (CR). 1 CR = 10,000,000 INR. "
-            "STAGE must be one of: L1, LOA, WO, NTP, MOU, OTHER. Output MUST be STRICT JSON only."
+            "You ONLY summarize and extract structured data from provided text. You do NOT browse the web.\n\n"
+            "HARD RULES:\n"
+            "1) NEVER fabricate numbers or facts. If not present, output null and add the field name to missing_fields.\n"
+            "2) Use only provided raw_text/attachment_text. No external sources.\n"
+            "3) Provide evidence_spans (<=160 chars each) for key extractions/classifications.\n"
+            "4) CURRENCY: Convert raw INR to Crore (CR). 1 CR = 10,000,000 INR.\n"
+            "5) STAGE: Must be one of: \"L1\" | \"LOA\" | \"WO\" | \"NTP\" | \"MOU\" | \"OTHER\".\n"
+            "6) Output MUST be STRICT JSON only.\n"
+            "7) Extract company_name and nse_symbol from the document when present (header, footer or body). "
+            "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore)."
         )
         for model_name in get_gemini_model_candidates():
             try:
@@ -944,8 +958,17 @@ Return STRICT JSON only with these keys: summary (string), impact_score (integer
                     config=types.GenerateContentConfig(system_instruction=sys_instr),
                 )
                 result = extract_json(response.text)
-                if result and isinstance(result.get('summary'), str):
-                    return jsonify(result)
+                if not result or not isinstance(result.get('summary'), str):
+                    continue
+                # Normalize to expected shape: ensure extracted has all fields used by frontend scoring
+                extracted = result.get('extracted') or {}
+                if not isinstance(extracted, dict):
+                    extracted = {}
+                # Ensure symbol/company at top level for frontend (from extracted or keep from candidate)
+                result.setdefault('symbol', extracted.get('nse_symbol') or extracted.get('symbol') or symbol)
+                result.setdefault('company_name', extracted.get('company_name') or company_name)
+                result['extracted'] = extracted
+                return jsonify(result)
             except Exception as e:
                 logger.warning(f"Reg30 analyze ({model_name}): {e}")
                 continue
