@@ -510,6 +510,41 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
   return null;
 };
 
+/**
+ * Specifically regenerates the narrative only (to save costs on re-extracting everything).
+ */
+export const regenerateNarrativeOnly = async (report: Reg30Report): Promise<Reg30Report | null> => {
+  if (report.impact_score < 50) return null;
+
+  const det = getDeterministicAnalysis({
+    event_date: report.event_date,
+    summary: report.summary,
+    impact_score: report.impact_score,
+    extracted_data: report.extracted_data
+  });
+  const narrativeData = await analyzeEventNarrative({
+    symbol: report.symbol,
+    event_family: report.event_family,
+    stage: report.stage,
+    order_value_cr: report.order_value_cr,
+    customer: report.extracted_data?.customer,
+    ...det
+  });
+
+  if (narrativeData) {
+    const { data: updated } = await supabase.from('analyzed_events').update({
+      event_analysis_text: narrativeData.event_analysis_text,
+      institutional_risk: det.institutional_risk,
+      policy_bias: det.policy_bias,
+      tactical_plan: det.tactical_plan,
+      trigger_text: det.trigger_text,
+      analysis_updated_at: new Date().toISOString()
+    }).eq('id', report.id).select().single();
+    return updated as any;
+  }
+  return null;
+};
+
 export const toggleBookmark = async (symbol: string, companyName: string): Promise<boolean> => {
   try {
     const { data: existing } = await supabase.from('priority_stocks').select('id').eq('symbol', symbol).maybeSingle();

@@ -6,7 +6,6 @@ import {
   ChevronUp, 
   ExternalLink, 
   RefreshCw, 
-  CheckCircle, 
   FileText,
   ChevronLeft,
   ChevronRight,
@@ -25,7 +24,8 @@ import {
   clearReg30History,
   toggleBookmark,
   fetchBookmarkedSymbols,
-  reAnalyzeSingleEvent
+  reAnalyzeSingleEvent,
+  regenerateNarrativeOnly
 } from '../services/reg30Service';
 import { Reg30Report, EventCandidate, Reg30Source } from '../types';
 
@@ -41,6 +41,7 @@ const Reg30Tab: React.FC = () => {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [bookmarkedSymbols, setBookmarkedSymbols] = useState<Set<string>>(new Set());
   const [reAnalyzingId, setReAnalyzingId] = useState<string | null>(null);
+  const [generatingNarrativeId, setGeneratingNarrativeId] = useState<string | null>(null);
   const [xbrlModalOpen, setXbrlModalOpen] = useState(false);
   const [xbrlLinksText, setXbrlLinksText] = useState('');
   const [xbrlProcessing, setXbrlProcessing] = useState(false);
@@ -164,6 +165,22 @@ const Reg30Tab: React.FC = () => {
       console.error("Re-analysis failed:", e);
     } finally {
       setReAnalyzingId(null);
+    }
+  };
+
+  const handleRegenerateNarrative = async (report: Reg30Report) => {
+    setGeneratingNarrativeId(report.id);
+    try {
+      const updated = await regenerateNarrativeOnly(report);
+      if (updated) {
+        setReports(prev => prev.map(r => r.id === report.id ? { ...r, ...updated } : r));
+      } else {
+        alert("Failed to generate event analysis. Check Gemini quota or document size.");
+      }
+    } catch (e) {
+      console.error("Narrative generation failed:", e);
+    } finally {
+      setGeneratingNarrativeId(null);
     }
   };
 
@@ -359,7 +376,7 @@ const Reg30Tab: React.FC = () => {
                     onClick={() => setExpandedRow(expandedRow === report.id ? null : report.id)}
                     className="mt-2 text-[10px] font-bold text-indigo-600 uppercase flex items-center hover:text-indigo-800"
                   >
-                    View Scoring Factors
+                    {expandedRow === report.id ? 'HIDE AUDIT TRAIL' : 'VIEW SCORING FACTORS'}
                     {expandedRow === report.id ? <ChevronUp className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1" />}
                   </button>
                 </div>
@@ -396,44 +413,105 @@ const Reg30Tab: React.FC = () => {
               </div>
 
               {expandedRow === report.id && (
-                <div className="bg-slate-50 px-4 py-4 border-t border-slate-100 ml-12 mr-4 mb-4 rounded-b-lg animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-widest">Scoring Factors</h4>
-                      <ul className="space-y-1">
-                        {report.scoring_factors && report.scoring_factors.length > 0 ? (
-                          report.scoring_factors.map((factor, idx) => (
-                            <li key={idx} className="text-xs text-slate-600 flex items-center">
-                              <CheckCircle className="w-3 h-3 mr-2 text-green-500" />
-                              {factor}
-                            </li>
-                          ))
-                        ) : (
-                          <li className="text-xs text-slate-400 italic">No scoring factors recorded.</li>
-                        )}
-                      </ul>
-                    </div>
-                    <div>
-                      <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-widest">Tactical Narrative</h4>
-                      {report.event_analysis_text ? (
-                        <div className="text-xs text-slate-700 bg-white p-3 rounded border border-slate-200 italic shadow-sm">
-                          "{report.event_analysis_text}"
+                <div className="bg-slate-50/50 animate-in slide-in-from-top-2 border-t border-slate-100">
+                  <div className="px-10 py-10 border-l-4 border-indigo-600">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+                      {/* Left Column: Scoring & Evidence */}
+                      <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-10">
+                        <div className="space-y-4">
+                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Scoring Factors</h4>
+                          <div className="space-y-2">
+                            {report.scoring_factors?.map((f, i) => {
+                              const colonIdx = f.indexOf(':');
+                              const prefix = colonIdx !== -1 ? f.substring(0, colonIdx) : f;
+                              const rest = colonIdx !== -1 ? f.substring(colonIdx + 1) : '';
+                              return (
+                                <div key={i} className="flex gap-3 text-[11px] font-bold">
+                                  <span className={f.startsWith('+') ? 'text-emerald-600' : 'text-rose-600'}>{prefix}</span>
+                                  <span className="text-slate-600">{rest}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      ) : (
-                        <span className="text-xs text-slate-400 italic">No tactical narrative generated (Impact &lt; 50).</span>
-                      )}
-                      {report.extracted_data && (
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-                          {Object.entries(report.extracted_data).map(([k, v]) => (
-                            v !== null && v !== undefined && (
-                              <div key={k} className="flex flex-col">
-                                <span className="text-[9px] text-slate-400 uppercase font-bold">{k.replace(/_/g, ' ')}</span>
-                                <span className="text-xs font-mono text-slate-700">{String(v)}</span>
+                        <div className="space-y-4">
+                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Evidence Extraction</h4>
+                          <div className="space-y-3">
+                            {(report.event_family === 'ORDER_CONTRACT' || report.event_family === 'ORDER_PIPELINE') && (
+                              <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-[10px] text-indigo-700 font-black uppercase tracking-wider">
+                                Execution timeline: {report.extracted_data?.execution_months || 'N/A'} months
+                                {report.extracted_data?.end_date && ` (Ending: ${report.extracted_data.end_date})`}
                               </div>
-                            )
-                          ))}
+                            )}
+                            {report.evidence_spans?.map((span, i) => (
+                              <div key={i} className="p-3 bg-white border border-slate-100 rounded-xl text-[10px] italic text-slate-500 font-medium">"{span}"</div>
+                            ))}
+                          </div>
                         </div>
-                      )}
+                      </div>
+
+                      {/* Right Column: EVENT ANALYSIS PANEL */}
+                      <div className="lg:col-span-4 space-y-6">
+                        <div className="flex flex-col gap-2">
+                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Action Recommendation</h4>
+                          <p className="text-[12px] font-black text-indigo-600 uppercase tracking-widest">{report.recommendation.replace(/_/g, ' ')}</p>
+                        </div>
+
+                        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-5 flex flex-col min-h-[300px]">
+                          <div className="flex items-center justify-between border-b border-slate-50 pb-3">
+                            <h4 className="text-[11px] font-black text-slate-900 uppercase tracking-widest">Event Analysis</h4>
+                          </div>
+
+                          {report.impact_score >= 50 ? (
+                            <div className="space-y-6 animate-in fade-in duration-700 flex flex-col flex-1">
+                              <div className="space-y-3 flex-1">
+                                {report.event_analysis_text ? (
+                                  <div className="space-y-4">
+                                    <p className="text-[11px] font-medium text-slate-600 leading-relaxed italic border-l-2 border-indigo-100 pl-4 py-1">
+                                      {report.event_analysis_text}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div className="py-12 flex flex-col items-center gap-4 text-center">
+                                    <p className="text-[10px] font-black text-slate-300 uppercase leading-relaxed px-4">Tactical narrative missing.</p>
+                                    <button
+                                      onClick={() => handleRegenerateNarrative(report)}
+                                      disabled={generatingNarrativeId === report.id}
+                                      className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
+                                    >
+                                      {generatingNarrativeId === report.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+                                      Generate Analysis
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-50">
+                                <div className="space-y-1">
+                                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Institutional Risk</p>
+                                  <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase inline-block border ${
+                                    report.institutional_risk === 'HIGH' ? 'bg-rose-50 text-rose-600 border-rose-100' :
+                                    report.institutional_risk === 'MED' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                  }`}>{report.institutional_risk || 'LOW'}</span>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Policy Bias</p>
+                                  <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase inline-block border ${
+                                    report.policy_bias === 'TAILWIND' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                    report.policy_bias === 'HEADWIND' ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-slate-50 text-slate-400 border-slate-100'
+                                  }`}>{report.policy_bias || 'NEUTRAL'}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center py-8 text-center space-y-4 opacity-50 grayscale">
+                              <p className="text-[9px] font-black text-slate-400 uppercase leading-relaxed max-w-[180px]">
+                                Tactical analysis disabled for events with impact score &lt; 50.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
