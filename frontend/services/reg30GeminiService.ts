@@ -25,6 +25,9 @@ export const analyzeReg30Event = async (candidate: EventCandidate): Promise<Reg3
     4) CURRENCY: Convert raw INR to Crore (CR). 1 CR = 10,000,000 INR.
     5) STAGE: Must be one of: "L1" | "LOA" | "WO" | "NTP" | "MOU" | "OTHER".
     6) Output MUST be STRICT JSON only.
+    7) MANDATORY: Read the very beginning of the document. Look for a 'General Information' section with 'NSE Symbol*' and 'Name of the Company*' (or similar). Set extracted.nse_symbol to the symbol value (e.g. MCLOUD, AHUCON) and extracted.company_name to the full company name. Always prefer these document values over any context.
+    8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore).
+    9) For order_value_cr use ONLY 'Broad commercial consideration' or 'size of the order(s)/contract(s)' (convert to Crore). Do NOT use 'Value of the order(s)/contract(s)' — it often has data entry errors (extra zeros).
   `;
 
   const prompt = `Perform a forensic extraction on this NSE disclosure:
@@ -53,7 +56,10 @@ export const analyzeReg30Event = async (candidate: EventCandidate): Promise<Reg3
             extracted: {
               type: SchemaType.OBJECT,
               properties: {
+                nse_symbol: { type: SchemaType.STRING, description: "NSE Symbol from General Information section of the document" },
+                company_name: { type: SchemaType.STRING, description: "Full company name from the document" },
                 order_value_cr: { type: SchemaType.NUMBER },
+                market_cap_cr: { type: SchemaType.NUMBER },
                 stage: { type: SchemaType.STRING },
                 international: { type: SchemaType.BOOLEAN },
                 new_customer: { type: SchemaType.BOOLEAN },
