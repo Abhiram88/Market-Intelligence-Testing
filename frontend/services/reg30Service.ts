@@ -66,8 +66,8 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
     // Impact and recommendation are computed by calculateScoreAndRecommendation in the pipeline.
     const extracted = data.extracted && typeof data.extracted === 'object' ? data.extracted : {};
     const mergedExtracted = { ...extracted };
-    if (data.symbol != null && mergedExtracted.nse_symbol == null && mergedExtracted.symbol == null) mergedExtracted.nse_symbol = data.symbol;
-    if (data.company_name != null && mergedExtracted.company_name == null) mergedExtracted.company_name = data.company_name;
+    if (data.symbol && !mergedExtracted.nse_symbol && !mergedExtracted.symbol) mergedExtracted.nse_symbol = data.symbol;
+    if (data.company_name && !mergedExtracted.company_name) mergedExtracted.company_name = data.company_name;
     return {
       summary: data.summary,
       impact_score: typeof data.impact_score === 'number' ? data.impact_score : 0,
@@ -386,8 +386,8 @@ export const runReg30Analysis = async (
       if (aiResult) {
         onRowProgress(c.id, 'SAVING');
         const ext = aiResult.extracted || {};
-        const resolvedSymbol = ext.nse_symbol ?? ext.symbol ?? c.symbol;
-        const resolvedCompany = ext.company_name ?? c.company_name;
+        const resolvedSymbol = ext.nse_symbol || ext.symbol || c.symbol;
+        const resolvedCompany = ext.company_name || c.company_name;
         const familyForScoring =
           c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
             ? 'ORDER_CONTRACT'
@@ -403,7 +403,7 @@ export const runReg30Analysis = async (
             extracted_data: aiResult.extracted
           });
           
-          const narrativeCacheKey = getStringHash(`narrative_v2|${resolvedSymbol}|${c.event_date}|${det.tactical_plan}`);
+          const narrativeCacheKey = getStringHash(`narrative_v3|${resolvedSymbol}|${resolvedCompany}|${c.event_date}|${det.tactical_plan}|${c.attachment_link || c.id}`);
           let narrativeData = null;
           try {
             const { data: narrativeCached } = await supabase.from('gemini_cache').select('response_json').eq('cache_key', narrativeCacheKey).maybeSingle();
@@ -509,8 +509,8 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
   const aiResult = await analyzeReg30EventViaProxy(candidate) ?? await analyzeReg30Event(candidate);
   if (aiResult) {
     const ext = aiResult.extracted || {};
-    const resolvedSymbol = ext.nse_symbol ?? ext.symbol ?? report.symbol;
-    const resolvedCompany = ext.company_name ?? report.company_name;
+    const resolvedSymbol = ext.nse_symbol || ext.symbol || report.symbol;
+    const resolvedCompany = ext.company_name || report.company_name;
     const scoring = calculateScoreAndRecommendation(report.event_family, aiResult.extracted, aiResult.confidence, report.event_date);
     
     let analysisPayload: any = {};

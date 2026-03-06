@@ -979,18 +979,22 @@ def reg30_analyze():
                 result['symbol'] = extracted.get('nse_symbol') or extracted.get('symbol') or result.get('symbol') or symbol or ''
                 result['company_name'] = extracted.get('company_name') or result.get('company_name') or company_name or 'Unknown'
                 # Fallback: parse from document text if Gemini missed General Information (table format: | NSE Symbol* | VALUE |)
-                if (not result['symbol'] or not result['company_name']) and attachment_text:
-                    head = attachment_text[:2500]
+                if (not result['symbol'] or not result['company_name'] or result['company_name'] == 'Unknown') and attachment_text:
+                    head = attachment_text[:3000]
                     if not result['symbol'] and ('NSE Symbol' in head or 'nse symbol' in head.lower()):
-                        m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:\n]*\s*([A-Z0-9]{2,20})\s*[\s|]', head, re.IGNORECASE)
+                        m = re.search(r'NSE\s+Symbol\s*\*?\s*[:\s|]*([A-Z][A-Z0-9]{1,19})', head, re.IGNORECASE)
+                        if not m:
+                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:\n]*\s*([A-Z0-9]{2,20})\s*[\s|]', head, re.IGNORECASE)
                         if not m:
                             m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:]*([A-Z0-9]{2,20})', head, re.IGNORECASE)
                         if m:
-                            result['symbol'] = m.group(1).strip()
+                            result['symbol'] = m.group(1).strip().upper()
                             extracted['nse_symbol'] = result['symbol']
                     if not result['company_name'] or result['company_name'] == 'Unknown':
                         if 'Name of the Company' in head or 'name of the company' in head.lower():
-                            m = re.search(r'Name\s+of\s+the\s+Company[^*]*\*?\s*[\s|:\n]*\s*([^\n|]+?)(?:\s*[\n|]|$)', head, re.IGNORECASE)
+                            m = re.search(r'Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]*(.+?)(?=\s*(?:Compliance\s+Officer|SEBI|BSE\s+Script|Registered\s+Office|CIN|Date\s+of|ISIN|Scrip\s+Code|Whether\s+|Regulation|[\n|]|$))', head, re.IGNORECASE)
+                            if not m:
+                                m = re.search(r'Name\s+of\s+the\s+Company[^*]*\*?\s*[\s|:\n]*\s*([^\n|]+?)(?:\s*[\n|]|$)', head, re.IGNORECASE)
                             if m:
                                 name = m.group(1).strip()
                                 if name and len(name) > 2 and name.upper() not in ('NA', 'N/A', 'NOT LISTED'):
