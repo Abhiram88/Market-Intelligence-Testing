@@ -992,7 +992,7 @@ def reg30_analyze():
                             extracted['nse_symbol'] = result['symbol']
                     if not result['company_name'] or result['company_name'] == 'Unknown':
                         if 'Name of the Company' in head or 'name of the company' in head.lower():
-                            m = re.search(r'Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]*(.+?)(?=\s*(?:Compliance\s+Officer|SEBI|BSE\s+Scrip|BSE\s+Script|Registered\s+Office|CIN|Date\s+of|ISIN|Scrip\s+Code|Whether\s+|Regulation|[\n|]|$))', head, re.IGNORECASE)
+                            m = re.search(r'Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]*(.+?)(?=\s*(?:Compliance\s+Officer|SEBI|BSE\s+Script|Registered\s+Office|CIN|Date\s+of|ISIN|Scrip\s+Code|Whether\s+|Regulation|[\n|]|$))', head, re.IGNORECASE)
                             if not m:
                                 m = re.search(r'Name\s+of\s+the\s+Company[^*]*\*?\s*[\s|:\n]*\s*([^\n|]+?)(?:\s*[\n|]|$)', head, re.IGNORECASE)
                             if m:

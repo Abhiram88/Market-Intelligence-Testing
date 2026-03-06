@@ -403,7 +403,7 @@ export const runReg30Analysis = async (
             extracted_data: aiResult.extracted
           });
           
-          const narrativeCacheKey = getStringHash(`narrative_v3|${resolvedSymbol}|${resolvedCompany}|${c.event_date}|${det.tactical_plan}|${c.id}`);
+          const narrativeCacheKey = getStringHash(`narrative_v3|${resolvedSymbol}|${resolvedCompany}|${c.event_date}|${det.tactical_plan}|${c.attachment_link || c.id}`);
           let narrativeData = null;
           try {
             const { data: narrativeCached } = await supabase.from('gemini_cache').select('response_json').eq('cache_key', narrativeCacheKey).maybeSingle();
