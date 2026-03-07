@@ -411,48 +411,47 @@ export const runReg30Analysis = async (
     if (i > 0) await new Promise(r => setTimeout(r, delayMs));
     try {
       onRowProgress(c.id, 'FETCHING');
+
+      // Always fetch and parse the attachment first — symbol/company extraction must
+      // happen regardless of whether a cached AI result exists. Previously this block
+      // was inside `if (!aiResult)`, so on a cache hit symbolFromText was never
+      // populated and the symbol was stored as N/A every time.
+      const attachment_text = await fetchAttachmentText(c.attachment_link || "");
+      if (attachment_text.length < 100) {
+        onRowProgress(c.id, 'FAILED');
+        continue;
+      }
+      // Strip XBRL metadata prefix so Gemini (and the regex below) sees actual filing content.
+      const cleanedText = cleanAttachmentText(attachment_text);
+      const textForSearch = cleanedText || attachment_text;
+      // Guaranteed symbol/company from the document — used as fallback at every resolution point.
+      const symbolFromText = extractNseSymbolFromText(textForSearch);
+      const companyFromText = extractCompanyNameFromText(textForSearch);
+      // Extract the real event date from the document ("Date of occurrence of event*").
+      let resolvedEventDate = c.event_date;
+      const EVENT_DATE_RE = /Date\s+of\s+(?:occurrence\s+of\s+(?:the\s+)?)?event\s*\*?\s*[\s|:]+([0-9]{1,2}[-\/][0-9]{1,2}[-\/][0-9]{2,4}|[0-9]{4}[-\/][0-9]{1,2}[-\/][0-9]{1,2})/i;
+      const dtm = textForSearch.match(EVENT_DATE_RE);
+      if (dtm) {
+        const parsed = normalizeDate(dtm[1]);
+        if (parsed && !parsed.startsWith('NaN')) resolvedEventDate = parsed;
+      }
+
+      // Check the Gemini cache — only skip the AI call, never skip text extraction.
       const cacheKey = getStringHash(`${c.event_family}|${c.company_name}|${c.attachment_link || c.id}`);
-      
       let aiResult = null;
       try {
         const { data: cached } = await supabase.from('gemini_cache').select('response_json').eq('cache_key', cacheKey).maybeSingle();
         aiResult = cached?.response_json;
       } catch (e) {}
-      
-      let attachment_text = "";
-      let cleanedText = "";
-      let symbolFromText = "";
-      let companyFromText = "";
-      let resolvedEventDate = c.event_date;
-      
+
       if (!aiResult) {
-        attachment_text = await fetchAttachmentText(c.attachment_link || "");
-        if (attachment_text.length < 100) {
-          onRowProgress(c.id, 'FAILED');
-          continue;
-        }
-        // Strip XBRL metadata prefix so Gemini sees the actual filing content.
-        cleanedText = cleanAttachmentText(attachment_text);
-        // Client-side symbol/company extraction from the full text — reliable fallback
-        // even when the proxy's Gemini call or regex only sees the truncated window.
-        symbolFromText = extractNseSymbolFromText(cleanedText || attachment_text);
-        companyFromText = extractCompanyNameFromText(cleanedText || attachment_text);
-        // Extract the actual event date from the document ("Date of occurrence of event*")
-        // so we store the real event date instead of today's date for XBRL URL inputs.
-        // Captures DD-MM-YYYY, DD/MM/YYYY, YYYY-MM-DD, and YYYY/MM/DD formats.
-        const EVENT_DATE_RE = /Date\s+of\s+(?:occurrence\s+of\s+(?:the\s+)?)?event\s*\*?\s*[\s|:]+([0-9]{1,2}[-\/][0-9]{1,2}[-\/][0-9]{2,4}|[0-9]{4}[-\/][0-9]{1,2}[-\/][0-9]{1,2})/i;
-        const dtm = (cleanedText || attachment_text).match(EVENT_DATE_RE);
-        if (dtm) {
-          const parsed = normalizeDate(dtm[1]);
-          if (parsed && !parsed.startsWith('NaN')) resolvedEventDate = parsed;
-        }
         // Enrich the candidate with frontend-extracted values so the proxy prompt and
         // its own regex fallback also benefit from them.
         const enrichedCandidate = {
           ...c,
           symbol: normalizeSymbol(c.symbol) || symbolFromText || null,
           company_name: normalizeCompany(c.company_name) || companyFromText || 'Unknown',
-          attachment_text: cleanedText || attachment_text,
+          attachment_text: textForSearch,
         };
         onRowProgress(c.id, 'AI_ANALYZING');
         try {
