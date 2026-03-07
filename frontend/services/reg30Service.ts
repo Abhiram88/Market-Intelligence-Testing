@@ -298,6 +298,39 @@ const getDeterministicAnalysis = (report: Partial<Reg30Report>) => {
   };
 };
 
+/** Map a raw Supabase analyzed_events row to a typed Reg30Report. Used by both
+ *  fetchAnalyzedEvents and runReg30Analysis so that rows added to component state
+ *  immediately after an upsert have the same field names as rows fetched later. */
+const mapDbRowToReport = (item: any): Reg30Report => ({
+  id: item.id,
+  event_date: item.event_date || '',
+  symbol: item.symbol || 'N/A',
+  company_name: item.company_name || 'Unknown',
+  source: (item.source as Reg30Source) || 'XBRL',
+  event_family: (item.event_family as Reg30EventFamily) || 'OTHER',
+  stage: item.stage || '',
+  summary: item.summary || '',
+  impact_score: item.impact_score || 0,
+  direction: (item.direction as Sentiment) || 'NEUTRAL',
+  confidence: item.confidence || 0,
+  recommendation: (item.action_recommendation as ActionRecommendation) || 'TRACK',
+  link: item.source_link || '',
+  attachment_link: item.attachment_link || '',
+  attachment_text: item.attachment_text || '',
+  extracted_data: item.extracted_json || {},
+  evidence_spans: item.evidence_spans || [],
+  missing_fields: item.missing_fields || [],
+  scoring_factors: item.scoring_factors || [],
+  raw_text: item.summary || '',
+  order_value_cr: item.extracted_json?.order_value_cr || 0,
+  event_analysis_text: item.event_analysis_text || '',
+  institutional_risk: item.institutional_risk || 'LOW',
+  policy_bias: item.policy_bias || 'NEUTRAL',
+  policy_event: item.policy_event || null,
+  tactical_plan: item.tactical_plan || 'MOMENTUM_OK',
+  trigger_text: item.trigger_text || ''
+});
+
 export const fetchAnalyzedEvents = async (limit = 1000): Promise<Reg30Report[]> => {
   try {
     const { data, error } = await supabase
@@ -307,36 +340,7 @@ export const fetchAnalyzedEvents = async (limit = 1000): Promise<Reg30Report[]> 
       .limit(limit);
     
     if (error) return [];
-    
-    return (data || []).map(item => ({
-      id: item.id,
-      event_date: item.event_date || '',
-      symbol: item.symbol || 'N/A',
-      company_name: item.company_name || 'Unknown',
-      source: (item.source as Reg30Source) || 'XBRL',
-      event_family: (item.event_family as Reg30EventFamily) || 'OTHER',
-      stage: item.stage || '',
-      summary: item.summary || '',
-      impact_score: item.impact_score || 0,
-      direction: (item.direction as Sentiment) || 'NEUTRAL',
-      confidence: item.confidence || 0,
-      recommendation: (item.action_recommendation as ActionRecommendation) || 'TRACK',
-      link: item.source_link || '',
-      attachment_link: item.attachment_link || '',
-      attachment_text: item.attachment_text || '',
-      extracted_data: item.extracted_json || {},
-      evidence_spans: item.evidence_spans || [],
-      missing_fields: item.missing_fields || [],
-      scoring_factors: item.scoring_factors || [],
-      raw_text: item.summary || '',
-      order_value_cr: item.extracted_json?.order_value_cr || 0,
-      event_analysis_text: item.event_analysis_text || '',
-      institutional_risk: item.institutional_risk || 'LOW',
-      policy_bias: item.policy_bias || 'NEUTRAL',
-      policy_event: item.policy_event || null,
-      tactical_plan: item.tactical_plan || 'MOMENTUM_OK',
-      trigger_text: item.trigger_text || ''
-    }));
+    return (data || []).map(mapDbRowToReport);
   } catch (e) {
     return [];
   }
@@ -363,12 +367,22 @@ export const runReg30Analysis = async (
       } catch (e) {}
       
       let attachment_text = "";
+      let resolvedEventDate = c.event_date;
       
       if (!aiResult) {
         attachment_text = await fetchAttachmentText(c.attachment_link || "");
         if (attachment_text.length < 100) {
           onRowProgress(c.id, 'FAILED');
           continue;
+        }
+        // Extract the actual event date from the document ("Date of occurrence of event*")
+        // so we store the real event date instead of today's date for XBRL URL inputs.
+        // Captures DD-MM-YYYY, DD/MM/YYYY, YYYY-MM-DD, and YYYY/MM/DD formats.
+        const EVENT_DATE_RE = /Date\s+of\s+(?:occurrence\s+of\s+(?:the\s+)?)?event\s*\*?\s*[\s|:]+([0-9]{1,2}[-\/][0-9]{1,2}[-\/][0-9]{2,4}|[0-9]{4}[-\/][0-9]{1,2}[-\/][0-9]{1,2})/i;
+        const dtm = attachment_text.match(EVENT_DATE_RE);
+        if (dtm) {
+          const parsed = normalizeDate(dtm[1]);
+          if (parsed && !parsed.startsWith('NaN')) resolvedEventDate = parsed;
         }
         onRowProgress(c.id, 'AI_ANALYZING');
         try {
@@ -392,18 +406,18 @@ export const runReg30Analysis = async (
           c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
             ? 'ORDER_CONTRACT'
             : c.event_family!;
-        const scoring = calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, c.event_date);
+        const scoring = calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, resolvedEventDate);
         
         let analysisPayload: any = {};
         if (scoring.impact_score >= 50) {
           const det = getDeterministicAnalysis({
-            event_date: c.event_date,
+            event_date: resolvedEventDate,
             summary: aiResult.summary,
             impact_score: scoring.impact_score,
             extracted_data: aiResult.extracted
           });
           
-          const narrativeCacheKey = getStringHash(`narrative_v3|${resolvedSymbol}|${resolvedCompany}|${c.event_date}|${det.tactical_plan}|${c.attachment_link || c.id}`);
+          const narrativeCacheKey = getStringHash(`narrative_v3|${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${det.tactical_plan}|${c.attachment_link || c.id}`);
           let narrativeData = null;
           try {
             const { data: narrativeCached } = await supabase.from('gemini_cache').select('response_json').eq('cache_key', narrativeCacheKey).maybeSingle();
@@ -450,11 +464,11 @@ export const runReg30Analysis = async (
           };
         }
 
-        const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${c.event_date}|${aiResult.summary.substring(0, 30)}|${c.id}`);
+        const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${aiResult.summary.substring(0, 30)}|${c.id}`);
         const attachmentTextStored = attachment_text || "Content from Cache";
         // Only include columns that exist on analyzed_events to avoid Supabase 400 (PGRST102)
         const payload: Record<string, unknown> = {
-          event_date: c.event_date || null,
+          event_date: resolvedEventDate || null,
           symbol: String(resolvedSymbol ?? ''),
           company_name: String(resolvedCompany ?? 'Unknown'),
           source: c.source || 'XBRL',
@@ -485,7 +499,7 @@ export const runReg30Analysis = async (
           console.error('[Reg30] Supabase upsert failed:', upsertError.message, upsertError.details, upsertError.hint);
           onRowProgress(c.id, 'FAILED');
         } else {
-          if (report) reports.push(report as any);
+          if (report) reports.push(mapDbRowToReport(report));
           onRowProgress(c.id, 'COMPLETED');
         }
       } else {
@@ -561,7 +575,7 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
       order_type: scoring.order_type,
       ...analysisPayload
     }).eq('id', report.id).select().single();
-    return updated as any;
+    return updated ? mapDbRowToReport(updated) : null;
   }
   return null;
 };
@@ -596,7 +610,7 @@ export const regenerateNarrativeOnly = async (report: Reg30Report): Promise<Reg3
       trigger_text: det.trigger_text,
       analysis_updated_at: new Date().toISOString()
     }).eq('id', report.id).select().single();
-    return updated as any;
+    return updated ? mapDbRowToReport(updated) : null;
   }
   return null;
 };
@@ -694,18 +708,26 @@ export const candidatesFromXbrlUrls = (urlLines: string[]): EventCandidate[] => 
   return urlLines
     .map(l => l.trim())
     .filter(l => l.length > 0 && (l.startsWith('http://') || l.startsWith('https://')))
-    .map((url, i) => ({
-      id: getStringHash(`xbrl-url-${url}-${i}`),
-      source: 'XBRL' as Reg30Source,
-      event_date: today,
-      symbol: null,
-      company_name: 'Unknown',
-      category: 'XBRL',
-      raw_text: `XBRL link: ${url}`,
-      attachment_link: url,
-      event_family: 'OTHER' as Reg30EventFamily,
-      link: url,
-    }));
+    .map((url, i) => {
+      // NSE XBRL/iXBRL URLs embed the date in the filename as _DDMMYYYYHHMMSS_
+      // e.g. ANN_AWARD_BAGGING_144841_05032026193733_iXBRL_WEB.html → 2026-03-05
+      const urlDateMatch = url.match(/_(\d{2})(\d{2})(\d{4})\d{6}_/);
+      const event_date = urlDateMatch
+        ? `${urlDateMatch[3]}-${urlDateMatch[2]}-${urlDateMatch[1]}`
+        : today;
+      return {
+        id: getStringHash(`xbrl-url-${url}-${i}`),
+        source: 'XBRL' as Reg30Source,
+        event_date,
+        symbol: null,
+        company_name: 'Unknown',
+        category: 'XBRL',
+        raw_text: `XBRL link: ${url}`,
+        attachment_link: url,
+        event_family: 'OTHER' as Reg30EventFamily,
+        link: url,
+      };
+    });
 };
 
 export const parseNseCsv = (text: string, source: Reg30Source): EventCandidate[] => {
