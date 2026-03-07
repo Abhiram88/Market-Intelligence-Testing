@@ -906,6 +906,15 @@ def parse_attachment():
         # Strip tags and collapse whitespace for text extraction
         text = re.sub(r'<script[^>]*>[\s\S]*?</script>', ' ', html, flags=re.IGNORECASE)
         text = re.sub(r'<style[^>]*>[\s\S]*?</style>', ' ', text, flags=re.IGNORECASE)
+        # Strip iXBRL header/hidden metadata blocks first — these contain large amounts of XBRL
+        # context/unit definitions whose text content would otherwise pad out the beginning of the
+        # extracted text and push the visible "General Information" section far past the window
+        # used for both Gemini input and the regex fallback.
+        text = re.sub(r'<ix:header[\s\S]*?</ix:header>', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'<ix:hidden[\s\S]*?</ix:hidden>', ' ', text, flags=re.IGNORECASE)
+        # Preserve values from HTML input/select fields (some iXBRL renderers use form inputs)
+        text = re.sub(r'<input[^>]+\bvalue=["\']([^"\']{1,200})["\'][^>]*/?>',
+                      lambda m: f' {m.group(1)} ', text, flags=re.IGNORECASE)
         text = re.sub(r'<[^>]+>', ' ', text)
         text = re.sub(r'\s+', ' ', text).strip()
         return jsonify({"text": text[:100000] if text else ""})
@@ -980,7 +989,7 @@ def reg30_analyze():
                 result['company_name'] = extracted.get('company_name') or result.get('company_name') or company_name or 'Unknown'
                 # Fallback: parse from document text if Gemini missed General Information (table format: | NSE Symbol* | VALUE |)
                 if (not result['symbol'] or not result['company_name'] or result['company_name'] == 'Unknown') and attachment_text:
-                    head = attachment_text[:3000]
+                    head = attachment_text[:15000]
                     if not result['symbol'] and ('NSE Symbol' in head or 'nse symbol' in head.lower()):
                         m = re.search(r'NSE\s+Symbol\s*\*?\s*[:\s|]*([A-Z][A-Z0-9]{1,19})', head, re.IGNORECASE)
                         if not m:
