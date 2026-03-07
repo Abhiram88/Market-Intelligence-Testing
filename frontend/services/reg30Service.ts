@@ -150,10 +150,38 @@ const extractNseSymbolFromText = (text: string): string => {
   return m ? m[1].trim().toUpperCase() : '';
 };
 
-/** Search the full attachment text for "Name of the Company * VALUE" and return the name. */
+/** Search the full attachment text for "Name of the Company * VALUE" and return the name.
+ *
+ * The proxy's /api/attachment/parse endpoint strips all HTML tags and collapses whitespace
+ * to a single space, producing one long line with NO newlines or pipe characters:
+ *   "...Name of the Company* Niraj Cement Structurals Limited BSE Scrip Code* 532986..."
+ *
+ * The original regex used (?:\s*[\n|]|$) as a terminator which never matched because:
+ *   (a) there are no \n or | separators in the space-collapsed text, and
+ *   (b) $ (end of text) is thousands of chars away — beyond the {3,100} capture limit.
+ *
+ * Fix: use a lookahead on the known field labels that immediately follow in the NSE form
+ * (BSE Scrip Code, MSEI Symbol, ISIN, Date of, etc.) so the regex stops at the right place.
+ * Separator changed from [:\s|]+ to [:\s|]* (zero-or-more) because \s* before \*? may
+ * already consume the only space between the asterisk and the company name value.
+ *
+ * The lookahead also includes 'Name of the Company' itself — intentionally — so that if
+ * the same field label appears again in a different table section the capture stops there
+ * rather than running into the next occurrence.
+ */
+// Fields that always immediately follow "Name of the Company*" in the NSE General Information
+// table, plus structural separators for pipe/newline-delimited document variants.
+const COMPANY_NAME_LOOKAHEAD =
+  /(?:BSE|MSEI|ISIN\b|CIN\b|Compliance|SEBI|Registered|Date\s+of|Whether|Regulation|NSE\s+Symbol|Type\s+of|Time\s+of|Remarks|Name\s+of\s+the\s+Company|[\n|])/;
+
 const extractCompanyNameFromText = (text: string): string => {
   if (!text) return '';
-  const m = text.match(/Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]+([^\n|]{3,100}?)(?:\s*[\n|]|$)/im);
+  const m = text.match(
+    new RegExp(
+      `Name\\s+of\\s+the\\s+Company\\s*\\*?\\s*[:\\s|]*([^\\n|]{3,100}?)(?=\\s*${COMPANY_NAME_LOOKAHEAD.source}|$)`,
+      'im'
+    )
+  );
   if (!m) return '';
   const name = m[1].trim().replace(/\s+/g, ' ');
   return ['N/A', 'NA', 'NOT LISTED', 'NIL', 'UNKNOWN'].includes(name.toUpperCase()) ? '' : name;
@@ -470,10 +498,12 @@ export const runReg30Analysis = async (
         onRowProgress(c.id, 'SAVING');
         const ext = aiResult.extracted || {};
         // Use || (not ??) throughout: proxy may return empty strings for symbol/company.
+        // Apply normalizeCompany/normalizeSymbol so AI-returned sentinel values ('Unknown', 'N/A')
+        // are treated as absent — same as empty string — allowing companyFromText fallback.
         // symbolFromText / companyFromText are from the full attachment text — reliable
         // even when Gemini or the proxy regex only saw a truncated/metadata-heavy window.
         const resolvedSymbol = ext.nse_symbol || ext.symbol || symbolFromText || normalizeSymbol(c.symbol);
-        const resolvedCompany = ext.company_name || companyFromText || normalizeCompany(c.company_name) || 'Unknown';
+        const resolvedCompany = normalizeCompany(ext.company_name) || companyFromText || normalizeCompany(c.company_name) || 'Unknown';
         const familyForScoring =
           c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
             ? 'ORDER_CONTRACT'
