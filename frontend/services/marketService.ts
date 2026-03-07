@@ -89,9 +89,15 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
       throw new Error(errorType);
     }
   }
-  // 3. Market Closed — never return cached/static data; trading app shows live only or "Market closed"
+  // 3. Market Closed — return last known data from DB/API so UI can display LTP instead of blank.
   else {
-    throw new Error('market_closed');
+    try {
+      const lastKnown = await fetchLastKnownNiftyClose();
+      return { ...lastKnown, dataSource: 'Cache' as const, errorType: 'none' as const };
+    } catch (e) {
+      console.warn('fetchLastKnownNiftyClose failed during market-closed fallback:', e);
+      throw new Error('market_closed');
+    }
   }
 };
 

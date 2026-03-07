@@ -75,9 +75,11 @@ export const PriorityStocksCard: React.FC = () => {
     }
   };
 
-  const updateQuotesBatch = React.useCallback(async (stocks: PriorityStock[], forceOnce: boolean = false) => {
+  const updateQuotesBatch = React.useCallback(async (stocks: PriorityStock[]) => {
     const marketStatus = getMarketSessionStatus();
-    if (!marketStatus.isOpen && !forceOnce) return;
+    // Never attempt live API calls when market is closed — rely on DB-persisted prices
+    // from priority_stocks (already loaded via fetchTrackedSymbols) to show last known LTP.
+    if (!marketStatus.isOpen) return;
     if (document.hidden) return; 
 
     if (stocks.length === 0 || isUpdatingRef.current) return;
@@ -189,7 +191,7 @@ export const PriorityStocksCard: React.FC = () => {
     const init = async () => {
       const stocks = await fetchTrackedSymbols();
       if (stocks.length > 0) {
-        updateQuotesBatch(stocks, true); // Run once to get initial data
+        updateQuotesBatch(stocks); // Initial data fetch (no-op when market is closed)
         stocks.forEach(s => refreshHistoricalData(s.symbol));
       }
     };
