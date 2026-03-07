@@ -935,7 +935,10 @@ def reg30_analyze():
     try:
         data = request.get_json(silent=True) or {}
         candidate = data.get('candidate') or {}
-        attachment_text = (data.get('attachment_text') or '').strip()[:30000]
+        # Keep full text for regex fallback; truncate a copy for Gemini's context window.
+        # full_attachment_text is bounded by the frontend's parse endpoint which caps at 100k chars.
+        full_attachment_text = (data.get('attachment_text') or '').strip()
+        attachment_text = full_attachment_text[:30000]
         if len(attachment_text) < 100:
             return jsonify({
                 "error": "Document text empty or too short. The link could not be fetched or the page has no extractable content. Check the URL or try again later."
@@ -988,22 +991,22 @@ def reg30_analyze():
                 result['symbol'] = extracted.get('nse_symbol') or extracted.get('symbol') or result.get('symbol') or symbol or ''
                 result['company_name'] = extracted.get('company_name') or result.get('company_name') or company_name or 'Unknown'
                 # Fallback: parse from document text if Gemini missed General Information (table format: | NSE Symbol* | VALUE |)
-                if (not result['symbol'] or not result['company_name'] or result['company_name'] == 'Unknown') and attachment_text:
-                    head = attachment_text[:15000]
-                    if not result['symbol'] and ('NSE Symbol' in head or 'nse symbol' in head.lower()):
-                        m = re.search(r'NSE\s+Symbol\s*\*?\s*[:\s|]*([A-Z][A-Z0-9]{1,19})', head, re.IGNORECASE)
+                # Use full_attachment_text (up to 100k) so the search is not limited to the 30k Gemini window.
+                if (not result['symbol'] or not result['company_name'] or result['company_name'] == 'Unknown') and full_attachment_text:
+                    if not result['symbol'] and ('NSE Symbol' in full_attachment_text or 'nse symbol' in full_attachment_text.lower()):
+                        m = re.search(r'NSE\s+Symbol\s*\*?\s*[:\s|]*([A-Z][A-Z0-9]{1,19})', full_attachment_text, re.IGNORECASE)
                         if not m:
-                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:\n]*\s*([A-Z0-9]{2,20})\s*[\s|]', head, re.IGNORECASE)
+                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:\n]*\s*([A-Z0-9]{2,20})\s*[\s|]', full_attachment_text, re.IGNORECASE)
                         if not m:
-                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:]*([A-Z0-9]{2,20})', head, re.IGNORECASE)
+                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:]*([A-Z0-9]{2,20})', full_attachment_text, re.IGNORECASE)
                         if m:
                             result['symbol'] = m.group(1).strip().upper()
                             extracted['nse_symbol'] = result['symbol']
                     if not result['company_name'] or result['company_name'] == 'Unknown':
-                        if 'Name of the Company' in head or 'name of the company' in head.lower():
-                            m = re.search(r'Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]*(.+?)(?=\s*(?:Compliance\s+Officer|SEBI|BSE\s+Script|Registered\s+Office|CIN|Date\s+of|ISIN|Scrip\s+Code|Whether\s+|Regulation|[\n|]|$))', head, re.IGNORECASE)
+                        if 'Name of the Company' in full_attachment_text or 'name of the company' in full_attachment_text.lower():
+                            m = re.search(r'Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]*(.+?)(?=\s*(?:Compliance\s+Officer|SEBI|BSE\s+Script|Registered\s+Office|CIN|Date\s+of|ISIN|Scrip\s+Code|Whether\s+|Regulation|[\n|]|$))', full_attachment_text, re.IGNORECASE)
                             if not m:
-                                m = re.search(r'Name\s+of\s+the\s+Company[^*]*\*?\s*[\s|:\n]*\s*([^\n|]+?)(?:\s*[\n|]|$)', head, re.IGNORECASE)
+                                m = re.search(r'Name\s+of\s+the\s+Company[^*]*\*?\s*[\s|:\n]*\s*([^\n|]+?)(?:\s*[\n|]|$)', full_attachment_text, re.IGNORECASE)
                             if m:
                                 name = m.group(1).strip()
                                 if name and len(name) > 2 and name.upper() not in ('NA', 'N/A', 'NOT LISTED'):

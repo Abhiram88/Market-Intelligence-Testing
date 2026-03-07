@@ -113,8 +113,61 @@ const getStringHash = (str: string) => {
 };
 
 /**
- * ATTACHMENT PARSER
+ * CLIENT-SIDE IXBRL TEXT HELPERS
+ * These run in the browser on the raw text returned by /api/attachment/parse.
+ * They act as a fallback when the proxy server's iXBRL stripping or Gemini extraction
+ * misses the symbol/company (e.g. because the ix:header metadata prefix is still present
+ * and pushes the "General Information" table past the 30k-char Gemini window).
  */
+
+/**
+ * Strip XBRL metadata prefix from plain text.
+ * When the proxy hasn't stripped <ix:header>/<ix:hidden> server-side, the extracted plain text
+ * begins with a large block of XBRL context/unit definitions before the actual filing content.
+ * We detect this by finding the first recognisable NSE filing label and discard everything before it.
+ */
+const cleanAttachmentText = (text: string): string => {
+  if (!text || text.length < 500) return text;
+  const CONTENT_MARKERS = [
+    /NSE\s+Symbol/i,
+    /Name\s+of\s+the\s+Company/i,
+    /SECURITIES\s+AND\s+EXCHANGE\s+BOARD/i,
+    /General\s+Information/i,
+  ];
+  let earliest = -1;
+  for (const marker of CONTENT_MARKERS) {
+    const idx = text.search(marker);
+    if (idx !== -1 && (earliest === -1 || idx < earliest)) earliest = idx;
+  }
+  // Only trim when the marker is well past the start — indicating a metadata prefix is present.
+  return earliest > 1000 ? text.substring(earliest) : text;
+};
+
+/** Search the full attachment text for "NSE Symbol * VALUE" and return the symbol. */
+const extractNseSymbolFromText = (text: string): string => {
+  if (!text) return '';
+  const m = text.match(/NSE\s+Symbol\s*\*?\s*[:\s|]+([A-Z][A-Z0-9]{1,19})/i);
+  return m ? m[1].trim().toUpperCase() : '';
+};
+
+/** Search the full attachment text for "Name of the Company * VALUE" and return the name. */
+const extractCompanyNameFromText = (text: string): string => {
+  if (!text) return '';
+  const m = text.match(/Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]+([^\n|]{3,100}?)(?:\s*[\n|]|$)/im);
+  if (!m) return '';
+  const name = m[1].trim().replace(/\s+/g, ' ');
+  return ['N/A', 'NA', 'NOT LISTED', 'NIL', 'UNKNOWN'].includes(name.toUpperCase()) ? '' : name;
+};
+
+/** Normalise a symbol value: treat 'N/A'/null/'' as absent (returns ''). */
+const normalizeSymbol = (v: string | null | undefined): string =>
+  (!v || v === 'N/A') ? '' : v.trim();
+
+/** Normalise a company name: treat 'Unknown'/null/'' as absent (returns ''). */
+const normalizeCompany = (v: string | null | undefined): string =>
+  (!v || v === 'Unknown') ? '' : v.trim();
+
+
 export const fetchAttachmentText = async (url: string): Promise<string> => {
   if (!url) return "";
   try {
@@ -367,6 +420,9 @@ export const runReg30Analysis = async (
       } catch (e) {}
       
       let attachment_text = "";
+      let cleanedText = "";
+      let symbolFromText = "";
+      let companyFromText = "";
       let resolvedEventDate = c.event_date;
       
       if (!aiResult) {
@@ -375,18 +431,32 @@ export const runReg30Analysis = async (
           onRowProgress(c.id, 'FAILED');
           continue;
         }
+        // Strip XBRL metadata prefix so Gemini sees the actual filing content.
+        cleanedText = cleanAttachmentText(attachment_text);
+        // Client-side symbol/company extraction from the full text — reliable fallback
+        // even when the proxy's Gemini call or regex only sees the truncated window.
+        symbolFromText = extractNseSymbolFromText(cleanedText || attachment_text);
+        companyFromText = extractCompanyNameFromText(cleanedText || attachment_text);
         // Extract the actual event date from the document ("Date of occurrence of event*")
         // so we store the real event date instead of today's date for XBRL URL inputs.
         // Captures DD-MM-YYYY, DD/MM/YYYY, YYYY-MM-DD, and YYYY/MM/DD formats.
         const EVENT_DATE_RE = /Date\s+of\s+(?:occurrence\s+of\s+(?:the\s+)?)?event\s*\*?\s*[\s|:]+([0-9]{1,2}[-\/][0-9]{1,2}[-\/][0-9]{2,4}|[0-9]{4}[-\/][0-9]{1,2}[-\/][0-9]{1,2})/i;
-        const dtm = attachment_text.match(EVENT_DATE_RE);
+        const dtm = (cleanedText || attachment_text).match(EVENT_DATE_RE);
         if (dtm) {
           const parsed = normalizeDate(dtm[1]);
           if (parsed && !parsed.startsWith('NaN')) resolvedEventDate = parsed;
         }
+        // Enrich the candidate with frontend-extracted values so the proxy prompt and
+        // its own regex fallback also benefit from them.
+        const enrichedCandidate = {
+          ...c,
+          symbol: normalizeSymbol(c.symbol) || symbolFromText || null,
+          company_name: normalizeCompany(c.company_name) || companyFromText || 'Unknown',
+          attachment_text: cleanedText || attachment_text,
+        };
         onRowProgress(c.id, 'AI_ANALYZING');
         try {
-          aiResult = await analyzeReg30EventViaProxy({ ...c, attachment_text }) ?? await analyzeReg30Event({ ...c, attachment_text });
+          aiResult = await analyzeReg30EventViaProxy(enrichedCandidate) ?? await analyzeReg30Event(enrichedCandidate);
         } catch (_) {
           aiResult = null;
         }
@@ -400,8 +470,11 @@ export const runReg30Analysis = async (
       if (aiResult) {
         onRowProgress(c.id, 'SAVING');
         const ext = aiResult.extracted || {};
-        const resolvedSymbol = ext.nse_symbol || ext.symbol || c.symbol;
-        const resolvedCompany = ext.company_name || c.company_name;
+        // Use || (not ??) throughout: proxy may return empty strings for symbol/company.
+        // symbolFromText / companyFromText are from the full attachment text — reliable
+        // even when Gemini or the proxy regex only saw a truncated/metadata-heavy window.
+        const resolvedSymbol = ext.nse_symbol || ext.symbol || symbolFromText || normalizeSymbol(c.symbol);
+        const resolvedCompany = ext.company_name || companyFromText || normalizeCompany(c.company_name) || 'Unknown';
         const familyForScoring =
           c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
             ? 'ORDER_CONTRACT'
@@ -465,7 +538,7 @@ export const runReg30Analysis = async (
         }
 
         const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${aiResult.summary.substring(0, 30)}|${c.id}`);
-        const attachmentTextStored = attachment_text || "Content from Cache";
+        const attachmentTextStored = cleanedText || attachment_text || "Content from Cache";
         // Only include columns that exist on analyzed_events to avoid Supabase 400 (PGRST102)
         const payload: Record<string, unknown> = {
           event_date: resolvedEventDate || null,
@@ -514,17 +587,23 @@ export const runReg30Analysis = async (
 
 export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Report | null> => {
   const attachment_text = await fetchAttachmentText(report.attachment_link || "");
+  // Strip XBRL metadata prefix and extract symbol/company as fallbacks.
+  const cleanedText = cleanAttachmentText(attachment_text);
+  const symbolFromText = extractNseSymbolFromText(cleanedText || attachment_text);
+  const companyFromText = extractCompanyNameFromText(cleanedText || attachment_text);
   const candidate: EventCandidate = {
     id: report.id, source: report.source, event_date: report.event_date,
-    symbol: report.symbol, company_name: report.company_name, category: report.event_family,
-    raw_text: report.summary, attachment_text: attachment_text, link: report.link,
+    symbol: normalizeSymbol(report.symbol) || symbolFromText || null,
+    company_name: normalizeCompany(report.company_name) || companyFromText || 'Unknown',
+    category: report.event_family,
+    raw_text: report.summary, attachment_text: cleanedText || attachment_text, link: report.link,
     attachment_link: report.attachment_link, event_family: report.event_family
   };
   const aiResult = await analyzeReg30EventViaProxy(candidate) ?? await analyzeReg30Event(candidate);
   if (aiResult) {
     const ext = aiResult.extracted || {};
-    const resolvedSymbol = ext.nse_symbol || ext.symbol || report.symbol;
-    const resolvedCompany = ext.company_name || report.company_name;
+    const resolvedSymbol = ext.nse_symbol || ext.symbol || symbolFromText || normalizeSymbol(report.symbol);
+    const resolvedCompany = ext.company_name || companyFromText || normalizeCompany(report.company_name) || 'Unknown';
     const scoring = calculateScoreAndRecommendation(report.event_family, aiResult.extracted, aiResult.confidence, report.event_date);
     
     let analysisPayload: any = {};
@@ -567,7 +646,7 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
       symbol: resolvedSymbol,
       company_name: resolvedCompany,
       summary: aiResult.summary, impact_score: scoring.impact_score, action_recommendation: scoring.recommendation,
-      extracted_json: aiResult.extracted, attachment_text: attachment_text, confidence: aiResult.confidence,
+      extracted_json: aiResult.extracted, attachment_text: cleanedText || attachment_text, confidence: aiResult.confidence,
       direction: scoring.direction, stage: aiResult.extracted.stage, evidence_spans: aiResult.evidence_spans,
       missing_fields: aiResult.missing_fields, scoring_factors: scoring.factors, 
       conversion_bonus: scoring.conversion_bonus,
