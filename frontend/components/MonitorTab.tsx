@@ -43,7 +43,10 @@ const MonitorTab: React.FC = () => {
     };
 
     fetchData(); // Initial fetch
-    const fallbackInterval = window.setInterval(fetchData, 3000);
+    // When open: poll every 3s (socket is primary; REST is fallback).
+    // When closed: poll every 5 minutes — LTP doesn't change, Breeze also throttles to 5 min.
+    const { isOpen } = getMarketSessionStatus();
+    const fallbackInterval = window.setInterval(fetchData, isOpen ? 3000 : 5 * 60 * 1000);
 
     const socket = io(getProxyBaseUrl(), {
       transports: ['websocket', 'polling'],

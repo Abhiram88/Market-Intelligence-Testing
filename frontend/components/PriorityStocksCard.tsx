@@ -16,6 +16,9 @@ interface PriorityStock {
   last_updated?: string;
 }
 
+const POLL_INTERVAL_OPEN_MS = 12000;       // 12s when market open (socket is primary; REST is fallback)
+const POLL_INTERVAL_CLOSED_MS = 10 * 60 * 1000; // 10 min when closed (LTP doesn't change)
+
 export const PriorityStocksCard: React.FC = () => {
   const [priorityStocks, setPriorityStocks] = useState<PriorityStock[]>([]);
   const [quotes, setQuotes] = useState<Record<string, QuoteResponse>>({});
@@ -75,9 +78,8 @@ export const PriorityStocksCard: React.FC = () => {
     }
   };
 
-  const updateQuotesBatch = React.useCallback(async (stocks: PriorityStock[], forceOnce: boolean = false) => {
+  const updateQuotesBatch = React.useCallback(async (stocks: PriorityStock[]) => {
     const marketStatus = getMarketSessionStatus();
-    if (!marketStatus.isOpen && !forceOnce) return;
     if (document.hidden) return; 
 
     if (stocks.length === 0 || isUpdatingRef.current) return;
@@ -88,11 +90,8 @@ export const PriorityStocksCard: React.FC = () => {
       await new Promise(r => setTimeout(r, 80)); // Short stagger to avoid rate limits; socket is primary for real-time
 
       try {
-        let quote: QuoteResponse | null = null;
-        let depth: DepthResponse | null = null;
-
         try {
-          quote = await fetchQuote(stock.symbol);
+          const quote = await fetchQuote(stock.symbol);
           setQuotes(prev => ({ ...prev, [stock.symbol]: quote! }));
           setErrors(prev => {
             const next = { ...prev };
@@ -100,14 +99,23 @@ export const PriorityStocksCard: React.FC = () => {
             return next;
           });
         } catch (qErr: any) {
-          setErrors(prev => ({ ...prev, [stock.symbol]: qErr.message }));
+          // When market is closed, silently skip quote failures (session may not be active yet).
+          // Don't set error state — show "--" via fallback, not an ERROR badge.
+          if (!marketStatus.isOpen) {
+            console.warn(`Quote unavailable for ${stock.symbol} (market closed or session inactive)`);
+          } else {
+            setErrors(prev => ({ ...prev, [stock.symbol]: qErr.message }));
+          }
         }
 
-        try {
-          depth = await fetchDepth(stock.symbol);
-          setDepths(prev => ({ ...prev, [stock.symbol]: depth! }));
-        } catch (dErr) {
-          console.warn(`Depth failed for ${stock.symbol}`);
+        // Depth (bid/ask) is only meaningful during live trading; skip when market is closed.
+        if (marketStatus.isOpen) {
+          try {
+            const depth = await fetchDepth(stock.symbol);
+            setDepths(prev => ({ ...prev, [stock.symbol]: depth! }));
+          } catch (dErr) {
+            console.warn(`Depth failed for ${stock.symbol}`);
+          }
         }
 
         // Live prices stay in local state (quotes) from socket/REST; no DB write to avoid schema mismatch.
@@ -189,7 +197,7 @@ export const PriorityStocksCard: React.FC = () => {
     const init = async () => {
       const stocks = await fetchTrackedSymbols();
       if (stocks.length > 0) {
-        updateQuotesBatch(stocks, true); // Run once to get initial data
+        updateQuotesBatch(stocks); // Fetch LTP from Breeze on mount (works even when market is closed)
         stocks.forEach(s => refreshHistoricalData(s.symbol));
       }
     };
@@ -199,8 +207,9 @@ export const PriorityStocksCard: React.FC = () => {
   useEffect(() => {
     if (priorityStocks.length === 0) return;
     const marketStatus = getMarketSessionStatus();
-    // Shorter interval when market open so Vol Today / depth stay fresh if socket lags
-    const intervalMs = marketStatus.isOpen ? 12000 : 30000;
+    // When open: poll every 12s so Vol Today / depth stay fresh if socket lags.
+    // When closed: poll every 10 minutes — LTP doesn't change; initial mount fetch is sufficient.
+    const intervalMs = marketStatus.isOpen ? POLL_INTERVAL_OPEN_MS : POLL_INTERVAL_CLOSED_MS;
     const poller = window.setInterval(() => {
       updateQuotesBatch(priorityStocks);
     }, intervalMs);

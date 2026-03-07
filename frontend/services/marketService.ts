@@ -10,8 +10,12 @@ import { MarketLog } from '../types';
 
 // --- STATE & THROTTLING ---
 let lastApiCallTimestamp = 0;
+let lastClosedCallTimestamp = 0; // separate throttle for closed-market REST calls
 let lastDbWriteTimestamp = 0;
 let consecutiveApiFails = 0;
+
+const OPEN_MARKET_THROTTLE_MS = 2000;      // 2s between live-market REST calls
+const CLOSED_MARKET_THROTTLE_MS = 5 * 60 * 1000; // 5 min between closed-market LTP calls
 
 export interface MarketTelemetry extends BreezeQuote {
   dataSource: 'Breeze Direct' | 'Cache' | 'Offline';
@@ -47,7 +51,7 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
   // 2. Market Open Strategy
   if (isOpen) {
     const now = Date.now();
-    if (now - lastApiCallTimestamp < 2000) {
+    if (now - lastApiCallTimestamp < OPEN_MARKET_THROTTLE_MS) {
       throw new Error('Polling too frequently');
     }
     lastApiCallTimestamp = now;
@@ -89,9 +93,29 @@ export const fetchRealtimeMarketTelemetry = async (): Promise<MarketTelemetry> =
       throw new Error(errorType);
     }
   }
-  // 3. Market Closed — never return cached/static data; trading app shows live only or "Market closed"
+  // 3. Market Closed — fetch LTP from Breeze REST (works even when market is closed, returns
+  //    last available price). Fall back to Supabase cache only if Breeze is unavailable.
+  //    Throttle to 5 minutes: LTP doesn't change when market is closed.
   else {
-    throw new Error('market_closed');
+    const now = Date.now();
+    if (now - lastClosedCallTimestamp < CLOSED_MARKET_THROTTLE_MS) {
+      throw new Error('Polling too frequently');
+    }
+    lastClosedCallTimestamp = now;
+
+    try {
+      const niftyData = await fetchBreezeNiftyQuote();
+      return { ...niftyData, dataSource: 'Offline' as const, errorType: 'none' as const };
+    } catch (e) {
+      console.warn('Breeze REST unavailable for closed-market Nifty, trying DB cache:', e);
+      try {
+        const lastKnown = await fetchLastKnownNiftyClose();
+        return { ...lastKnown, dataSource: 'Offline' as const, errorType: 'none' as const };
+      } catch (dbErr) {
+        console.warn('DB cache also unavailable:', dbErr);
+        throw new Error('market_closed');
+      }
+    }
   }
 };
 
