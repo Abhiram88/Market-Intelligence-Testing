@@ -16,8 +16,7 @@ interface PriorityStock {
   last_updated?: string;
 }
 
-const POLL_INTERVAL_OPEN_MS = 12000;       // 12s when market open (socket is primary; REST is fallback)
-const POLL_INTERVAL_CLOSED_MS = 10 * 60 * 1000; // 10 min when closed (LTP doesn't change)
+const POLL_INTERVAL_OPEN_MS = 12000; // 12s when market open (socket is primary; REST is fallback)
 
 export const PriorityStocksCard: React.FC = () => {
   const [priorityStocks, setPriorityStocks] = useState<PriorityStock[]>([]);
@@ -80,7 +79,9 @@ export const PriorityStocksCard: React.FC = () => {
 
   const updateQuotesBatch = React.useCallback(async (stocks: PriorityStock[]) => {
     const marketStatus = getMarketSessionStatus();
-    if (document.hidden) return; 
+    // Only fetch live quotes during market hours — no data outside trading hours.
+    if (!marketStatus.isOpen) return;
+    if (document.hidden) return;
 
     if (stocks.length === 0 || isUpdatingRef.current) return;
     isUpdatingRef.current = true;
@@ -176,8 +177,7 @@ export const PriorityStocksCard: React.FC = () => {
   };
 
   const getRecommendationHint = (metrics: LiquidityMetrics | null) => {
-    const marketStatus = getMarketSessionStatus();
-    if (!marketStatus.isOpen) return "Market Closed - Last Ledger Displayed";
+    if (!getMarketSessionStatus().isOpen) return "Market closed";
     if (!metrics) return "Awaiting depth...";
     if (metrics.execution_style === 'AVOID') return "Avoid thin liquidity";
     if (metrics.regime === 'DISTRIBUTION') return "Sell-on-news risk; wait";
@@ -206,13 +206,10 @@ export const PriorityStocksCard: React.FC = () => {
 
   useEffect(() => {
     if (priorityStocks.length === 0) return;
-    const marketStatus = getMarketSessionStatus();
-    // When open: poll every 12s so Vol Today / depth stay fresh if socket lags.
-    // When closed: poll every 10 minutes — LTP doesn't change; initial mount fetch is sufficient.
-    const intervalMs = marketStatus.isOpen ? POLL_INTERVAL_OPEN_MS : POLL_INTERVAL_CLOSED_MS;
+    if (!getMarketSessionStatus().isOpen) return; // No polling outside trading hours
     const poller = window.setInterval(() => {
       updateQuotesBatch(priorityStocks);
-    }, intervalMs);
+    }, POLL_INTERVAL_OPEN_MS);
 
     return () => window.clearInterval(poller);
   }, [priorityStocks, updateQuotesBatch]);
@@ -265,7 +262,7 @@ export const PriorityStocksCard: React.FC = () => {
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-emerald-100 bg-emerald-50">
             <div className={`w-1 h-1 rounded-full ${marketStatus.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
             <span className={`text-[8px] font-black uppercase tracking-[0.2em] ${marketStatus.isOpen ? 'text-emerald-600' : 'text-slate-400'}`}>
-              {marketStatus.isOpen ? 'LIQUIDITY TICKER' : 'LEDGER STANDBY'}
+              {marketStatus.isOpen ? 'LIQUIDITY TICKER' : 'MARKET CLOSED'}
             </span>
           </div>
           <h2 className="text-lg font-black text-slate-900 uppercase tracking-tighter mt-1">Watchlist</h2>
@@ -294,9 +291,9 @@ export const PriorityStocksCard: React.FC = () => {
             const quote = quotes[stock.symbol];
             const metrics = calculateMetrics(stock.symbol);
             const error = errors[stock.symbol];
-            const displayPrice = quote?.last_traded_price ?? quote?.ltp ?? stock.last_price ?? null;
-            const displayPct = quote?.percent_change ?? quote?.ltp_percent_change ?? stock.change_percent ?? null;
-            const isPositive = (quote?.change ?? stock.change_val ?? 0) >= 0;
+            const displayPrice = quote?.last_traded_price ?? quote?.ltp ?? null;
+            const displayPct = quote?.percent_change ?? quote?.ltp_percent_change ?? null;
+            const isPositive = (quote?.change ?? 0) >= 0;
             const isExpanded = expandedSymbol === stock.symbol;
 
             return (
@@ -445,7 +442,7 @@ export const PriorityStocksCard: React.FC = () => {
 
       <div className="mt-4 pt-4 border-t border-slate-100 relative z-10">
         <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest leading-tight">
-          {marketStatus.isOpen ? 'Microstructure audit active. Socket + 12s REST fallback.' : 'Market closed. Last known ledger from persistence.'}
+          {marketStatus.isOpen ? 'Microstructure audit active. Socket + 12s REST fallback.' : 'Market closed. Live data available when market opens.'}
         </p>
       </div>
     </div>

@@ -44,16 +44,6 @@ export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry,
             </div>
         );
     }
-    if (telemetry?.dataSource === 'Cache' || telemetry?.dataSource === 'Offline') {
-      return (
-        <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-slate-800/30 border-slate-700/50">
-            <span className="flex h-2 w-2 relative">
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-slate-500"></span>
-            </span>
-            <span className="text-[10px] font-bold tracking-widest uppercase text-slate-400">OFFLINE</span>
-        </div>
-      )
-    }
 
     return (
         <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-slate-800/30 border-slate-700/50">
@@ -71,10 +61,6 @@ export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry,
       <div className="p-8 relative z-10">
         <div className="flex justify-between items-start mb-8">
           {getStatusIndicator()}
-          <div className="text-[10px] text-slate-500 font-mono text-right">
-            SOURCE<br/>
-            <span className="text-indigo-400 font-bold uppercase tracking-widest">{telemetry?.dataSource || '--'}</span>
-          </div>
         </div>
         <h2 className="text-xl font-bold text-slate-200 mb-1 tracking-tight">NIFTY 50</h2>
         {telemetry ? (
@@ -108,9 +94,9 @@ export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry,
             {isLoading ? (
               <p>Connecting to live feed…</p>
             ) : !getMarketSessionStatus().isOpen ? (
-              <p className="text-center text-slate-400 font-medium">Market closed — connect when market opens for live data</p>
+              <p className="text-center text-slate-500 font-medium">Market closed</p>
             ) : (
-              <p>No data available</p>
+              <p>Waiting for live data…</p>
             )}
           </div>
         )}
