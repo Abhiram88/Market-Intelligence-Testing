@@ -98,6 +98,13 @@ const MonitorTab: React.FC = () => {
         const spread = mid > 0 ? ((ask - bid) / mid) * 100 : null;
         const bidQty = depth.best_bid_quantity || 0;
         const askQty = depth.best_offer_quantity || 0;
+        const spreadStatus = (() => {
+          if (!spread || spread >= 0.50) return 'AVOID' as const;
+          if (spread < 0.05) return 'EXCELLENT' as const;
+          if (spread < 0.15) return 'GOOD' as const;
+          if (spread < 0.30) return 'ACCEPTABLE' as const;
+          return 'POOR' as const;
+        })();
         setStockMetrics({
           spread_pct: spread,
           depth_ratio: (bidQty + 1) / (askQty + 1),
@@ -105,17 +112,35 @@ const MonitorTab: React.FC = () => {
           regime: 'NEUTRAL',
           execution_style: spread && spread < 0.15 ? 'OK FOR MARKET' : 'LIMIT ONLY',
           bid, ask, bidQty, askQty,
-          avg_vol_20d: null
+          avg_vol_20d: null,
+          liquidity_quality_score: 50,
+          liquidity_grade: 'C',
+          is_tradeable: true,
+          risk_level: 'MEDIUM',
+          spread_status: spreadStatus,
+          volume_status: 'NORMAL',
+          depth_status: 'BALANCED',
+          time_regime: 'NORMAL',
+          execution_hint: spread && spread < 0.15 ? 'Good liquidity' : 'Use limit orders',
         });
       } catch (quoteErr: any) {
         setStockMetrics({
           spread_pct: null,
-          depth_ratio: 1,
+          depth_ratio: null,
           vol_ratio: null,
           regime: 'NEUTRAL',
-          execution_style: 'LIMIT ONLY',
+          execution_style: 'MARKET CLOSED',
           bid: 0, ask: 0, bidQty: 0, askQty: 0,
-          avg_vol_20d: null
+          avg_vol_20d: null,
+          liquidity_quality_score: 0,
+          liquidity_grade: 'F',
+          is_tradeable: false,
+          risk_level: 'EXTREME',
+          spread_status: 'AVOID',
+          volume_status: 'LOW',
+          depth_status: 'BALANCED',
+          time_regime: 'AFTER_HOURS',
+          execution_hint: 'Quote fetch failed',
         });
       }
 

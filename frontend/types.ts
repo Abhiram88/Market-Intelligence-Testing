@@ -31,15 +31,25 @@ export interface NewsAttribution {
 
 export interface LiquidityMetrics {
   spread_pct: number | null;
-  depth_ratio: number;
+  depth_ratio: number | null;
   vol_ratio: number | null;
   regime: 'BREAKOUT' | 'DISTRIBUTION' | 'NEUTRAL';
-  execution_style: 'LIMIT ONLY' | 'OK FOR MARKET' | 'AVOID';
+  execution_style: 'OK FOR MARKET' | 'LIMIT ONLY' | 'AVOID' | 'CAUTION' | 'MARKET CLOSED';
   bid: number;
   ask: number;
   bidQty: number;
   askQty: number;
   avg_vol_20d: number | null;
+  // Enhanced fields
+  liquidity_quality_score: number;
+  liquidity_grade: 'A' | 'B' | 'C' | 'D' | 'F';
+  is_tradeable: boolean;
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
+  spread_status: 'EXCELLENT' | 'GOOD' | 'ACCEPTABLE' | 'POOR' | 'AVOID';
+  volume_status: 'LOW' | 'NORMAL' | 'ELEVATED' | 'HIGH' | 'EXTREME';
+  depth_status: 'HEAVY SELLING' | 'SELLING BIAS' | 'BALANCED' | 'BUYING BIAS' | 'HEAVY BUYING';
+  time_regime: 'OPENING' | 'NORMAL' | 'CLOSING' | 'AFTER_HOURS';
+  execution_hint: string;
 }
 
 export type Reg30Source = 'XBRL' | 'CorpAction' | 'CreditRating' | 'RSS';

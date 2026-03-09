@@ -204,10 +204,45 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
   // to unsubscribe its Breeze feeds and disconnect the Breeze WebSocket.
   }, [watchlistKey]);  // Re-connect when the watchlist symbol list changes
 
+  const validateMarketData = (q: QuoteData | undefined): { isValid: boolean; reason?: string } => {
+    if (!q) return { isValid: false, reason: 'No quote data' };
+    const bid = q.best_bid_price || 0;
+    const ask = q.best_offer_price || 0;
+    if (bid <= 0 || ask <= 0) return { isValid: false, reason: 'Invalid bid/ask prices' };
+    if (ask < bid) return { isValid: false, reason: 'Ask < Bid (invalid)' };
+    // Spread > 10% of bid price indicates stale/market-closed data
+    if (((ask - bid) / bid) * 100 > 10) return { isValid: false, reason: 'Abnormal spread (>10%)' };
+    return { isValid: true };
+  };
+
   const calculateMetrics = (symbol: string): LiquidityMetrics | null => {
     const q = quotes[symbol];
     const avgVol = historicalCache[symbol];
-    if (!q) return null;
+
+    const validation = validateMarketData(q);
+
+    if (!validation.isValid) {
+      // Return a safe null-state — avoids the -200% spread bug when market is closed
+      // and bid/ask are zero.
+      return {
+        spread_pct: null,
+        depth_ratio: null,
+        vol_ratio: null,
+        regime: 'NEUTRAL',
+        execution_style: 'MARKET CLOSED',
+        bid: 0, ask: 0, bidQty: 0, askQty: 0,
+        avg_vol_20d: avgVol || null,
+        liquidity_quality_score: 0,
+        liquidity_grade: 'F',
+        is_tradeable: false,
+        risk_level: 'EXTREME',
+        spread_status: 'AVOID',
+        volume_status: 'LOW',
+        depth_status: 'BALANCED',
+        time_regime: 'AFTER_HOURS',
+        execution_hint: validation.reason || 'No data available',
+      };
+    }
 
     const bid = q.best_bid_price || 0;
     const ask = q.best_offer_price || 0;
@@ -215,10 +250,8 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
     const askQty = q.best_offer_quantity || 0;
     const mid = (bid + ask) / 2;
 
-    const spread_pct = mid > 0 ? ((ask - bid) / mid) * 100 : null;
-    const depth_ratio = (bidQty + 1) / (askQty + 1);
     const vol_today = q.total_quantity_traded || q.volume || 0;
-    const vol_ratio = avgVol ? vol_today / avgVol : null;
+    const vol_ratio = avgVol && avgVol > 0 ? vol_today / avgVol : null;
 
     const close = q.last_traded_price || q.ltp || 0;
     const high = q.high || 0;
@@ -226,39 +259,153 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
     const open = q.open || 0;
     const range = Math.max(high - low, 0.01);
 
+    const spread_pct = ((ask - bid) / mid) * 100;
+    const depth_ratio = (bidQty + 1) / (askQty + 1);
+
+    // Spread status
+    let spread_status: LiquidityMetrics['spread_status'];
+    if (spread_pct < 0.05) spread_status = 'EXCELLENT';
+    else if (spread_pct < 0.15) spread_status = 'GOOD';
+    else if (spread_pct < 0.30) spread_status = 'ACCEPTABLE';
+    else if (spread_pct < 0.50) spread_status = 'POOR';
+    else spread_status = 'AVOID';
+
+    // Volume status
+    let volume_status: LiquidityMetrics['volume_status'];
+    if (!vol_ratio) volume_status = 'NORMAL';
+    else if (vol_ratio < 0.5) volume_status = 'LOW';
+    else if (vol_ratio < 1.2) volume_status = 'NORMAL';
+    else if (vol_ratio < 2.0) volume_status = 'ELEVATED';
+    else if (vol_ratio < 4.0) volume_status = 'HIGH';
+    else volume_status = 'EXTREME';
+
+    // Depth status
+    let depth_status: LiquidityMetrics['depth_status'];
+    if (depth_ratio < 0.5) depth_status = 'HEAVY SELLING';
+    else if (depth_ratio < 0.8) depth_status = 'SELLING BIAS';
+    else if (depth_ratio <= 1.2) depth_status = 'BALANCED';
+    else if (depth_ratio <= 2.5) depth_status = 'BUYING BIAS';
+    else depth_status = 'HEAVY BUYING';
+
+    // Time-of-day regime (NSE hours: 09:15–15:30 IST).
+    // Always derive IST from UTC to be independent of the browser's local timezone.
+    const now = new Date();
+    const istOffset = 5.5 * 60; // IST = UTC + 5h30m, in minutes
+    const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+    const istMinutes = (utcMinutes + istOffset) % (24 * 60);
+    let time_regime: LiquidityMetrics['time_regime'];
+    if (istMinutes >= 9 * 60 + 15 && istMinutes < 10 * 60) time_regime = 'OPENING';
+    else if (istMinutes >= 15 * 60 && istMinutes < 15 * 60 + 30) time_regime = 'CLOSING';
+    else if (istMinutes >= 10 * 60 && istMinutes < 15 * 60) time_regime = 'NORMAL';
+    else time_regime = 'AFTER_HOURS';
+
+    // Price regime
     const wick_ratio = (high - Math.max(open, close)) / range;
     const close_pos = (close - low) / range;
+    let regime: LiquidityMetrics['regime'] = 'NEUTRAL';
+    if (wick_ratio > 0.55 && close_pos < 0.35 && vol_ratio && vol_ratio > 2.5) regime = 'DISTRIBUTION';
+    else if (close_pos > 0.70 && vol_ratio && vol_ratio > 2.0) regime = 'BREAKOUT';
 
-    let regime: 'BREAKOUT' | 'DISTRIBUTION' | 'NEUTRAL' = 'NEUTRAL';
-    if (wick_ratio > 0.55 && close_pos < 0.35 && vol_ratio && vol_ratio > 2.5) {
-      regime = 'DISTRIBUTION';
-    } else if (close_pos > 0.70 && vol_ratio && vol_ratio > 2.0) {
-      regime = 'BREAKOUT';
+    // Liquidity quality score (0-100)
+    let score = 50;
+    if (spread_status === 'EXCELLENT') score += 35;
+    else if (spread_status === 'GOOD') score += 25;
+    else if (spread_status === 'ACCEPTABLE') score += 10;
+    else if (spread_status === 'POOR') score -= 10;
+    else score -= 30;
+
+    if (volume_status === 'HIGH') score += 30;
+    else if (volume_status === 'ELEVATED') score += 20;
+    else if (volume_status === 'NORMAL') score += 10;
+    else if (volume_status === 'LOW') score -= 15;
+    // EXTREME volume is context-dependent (could be strong momentum or a circuit-breaker spike),
+    // so no automatic score adjustment is applied — other signals (regime/spread) will determine quality.
+
+    if (depth_status === 'BALANCED') score += 20;
+    else if (depth_status === 'BUYING BIAS') score += 15;
+    else if (depth_status === 'SELLING BIAS') score -= 10;
+    else if (depth_status === 'HEAVY SELLING') score -= 20;
+    else score += 5; // HEAVY BUYING
+
+    if (regime === 'BREAKOUT') score += 15;
+    else if (regime === 'DISTRIBUTION') score -= 15;
+
+    if (time_regime === 'OPENING' || time_regime === 'CLOSING') score -= 10;
+
+    const liquidity_quality_score = Math.max(0, Math.min(100, score));
+
+    let liquidity_grade: LiquidityMetrics['liquidity_grade'];
+    let is_tradeable: boolean;
+    if (liquidity_quality_score >= 85) { liquidity_grade = 'A'; is_tradeable = true; }
+    else if (liquidity_quality_score >= 70) { liquidity_grade = 'B'; is_tradeable = true; }
+    else if (liquidity_quality_score >= 55) { liquidity_grade = 'C'; is_tradeable = true; }
+    else if (liquidity_quality_score >= 40) { liquidity_grade = 'D'; is_tradeable = false; }
+    else { liquidity_grade = 'F'; is_tradeable = false; }
+
+    // Execution style (5 states)
+    let execution_style: LiquidityMetrics['execution_style'];
+    let execution_hint: string;
+
+    if (spread_pct > 0.50) {
+      execution_style = 'AVOID';
+      execution_hint = `Spread too wide (${spread_pct.toFixed(2)}%) — illiquid`;
+    } else if (time_regime === 'OPENING' || time_regime === 'CLOSING') {
+      execution_style = 'CAUTION';
+      execution_hint = `${time_regime === 'OPENING' ? 'Opening' : 'Closing'} volatility — spreads widening`;
+    } else if (regime === 'DISTRIBUTION' && depth_ratio < 0.6) {
+      execution_style = 'AVOID';
+      execution_hint = 'Distribution + heavy selling pressure';
+    } else if (
+      spread_pct < 0.10 &&
+      (vol_ratio === null || vol_ratio >= 1.2) &&
+      depth_ratio > 0.7 && depth_ratio < 2.5 &&
+      time_regime === 'NORMAL'
+    ) {
+      execution_style = 'OK FOR MARKET';
+      execution_hint = `Excellent liquidity — market orders OK at ₹${mid.toFixed(2)}`;
+    } else if (
+      spread_pct < 0.15 &&
+      (vol_ratio === null || vol_ratio >= 1.0) &&
+      depth_ratio > 0.6 && depth_ratio < 3.0
+    ) {
+      execution_style = 'OK FOR MARKET';
+      execution_hint = 'Good liquidity — market orders acceptable';
+    } else if (spread_pct < 0.30) {
+      execution_style = 'LIMIT ONLY';
+      execution_hint = `Use limit orders near ₹${(bid + (ask - bid) * 0.4).toFixed(2)} to save spread`;
+    } else {
+      execution_style = 'LIMIT ONLY';
+      execution_hint = 'Moderate spread — limit orders recommended';
     }
 
-    let exec: 'LIMIT ONLY' | 'OK FOR MARKET' | 'AVOID' = 'LIMIT ONLY';
-    if (spread_pct === null) exec = 'LIMIT ONLY';
-    else if (spread_pct > 0.50) exec = 'AVOID';
-    else if (spread_pct < 0.15 && (vol_ratio === null || vol_ratio >= 1.2)) exec = 'OK FOR MARKET';
+    // Risk level
+    let risk_level: LiquidityMetrics['risk_level'];
+    if (execution_style === 'AVOID') risk_level = 'EXTREME';
+    else if (execution_style === 'CAUTION' || spread_pct > 0.30) risk_level = 'HIGH';
+    else if (spread_pct > 0.15 || vol_ratio === null || vol_ratio < 1.0) risk_level = 'MEDIUM';
+    else risk_level = 'LOW';
 
     return {
-      spread_pct,
-      depth_ratio,
-      vol_ratio,
-      regime,
-      execution_style: exec,
+      spread_pct, depth_ratio, vol_ratio, regime, execution_style,
       bid, ask, bidQty, askQty,
       avg_vol_20d: avgVol || null,
+      liquidity_quality_score, liquidity_grade, is_tradeable, risk_level,
+      spread_status, volume_status, depth_status, time_regime, execution_hint,
     };
   };
 
   const getRecommendationHint = (metrics: LiquidityMetrics | null) => {
-    if (!getMarketSessionStatus().isOpen) return 'Market closed';
-    if (!metrics) return 'Awaiting depth...';
-    if (metrics.execution_style === 'AVOID') return 'Avoid thin liquidity';
-    if (metrics.regime === 'DISTRIBUTION') return 'Sell-on-news risk; wait';
-    if (metrics.regime === 'BREAKOUT') return 'Momentum OK if volume holds';
-    return 'Watch confirmation';
+    if (!metrics) return 'Calculating...';
+    if (metrics.execution_style === 'MARKET CLOSED') return 'Market closed — no live data';
+    if (metrics.execution_style === 'AVOID') return metrics.execution_hint || 'Avoid — poor liquidity';
+    if (metrics.execution_style === 'CAUTION') return metrics.execution_hint || 'Caution — volatile period';
+    if (metrics.execution_style === 'OK FOR MARKET') {
+      return metrics.liquidity_grade === 'A' ? 'Excellent setup' : 'Good liquidity';
+    }
+    // LIMIT ONLY
+    if (metrics.regime === 'BREAKOUT' && metrics.volume_status === 'HIGH') return 'Momentum building';
+    if (metrics.volume_status === 'LOW') return 'Low volume — wait';
+    return metrics.execution_hint || 'Use limits to save spread';
   };
 
   const removeStock = async (symbol: string) => {
@@ -427,6 +574,8 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
                                   <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border inline-block ${
                                     metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
                                     metrics?.execution_style === 'AVOID' ? 'bg-rose-50 text-rose-600 border-rose-100' :
+                                    metrics?.execution_style === 'CAUTION' ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                    metrics?.execution_style === 'MARKET CLOSED' ? 'bg-slate-50 text-slate-400 border-slate-100' :
                                     'bg-amber-50 text-amber-600 border-amber-100'
                                   }`}>
                                     {metrics?.execution_style || '—'}
@@ -434,12 +583,49 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
                                 </div>
                               </div>
                             </div>
+
+                            <div className="grid grid-cols-3 gap-4 pt-4 border-t border-slate-50">
+                              <div className="flex flex-col gap-1.5">
+                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Liq Grade</p>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-black border inline-block w-fit ${
+                                  metrics?.liquidity_grade === 'A' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                  metrics?.liquidity_grade === 'B' ? 'bg-teal-50 text-teal-600 border-teal-100' :
+                                  metrics?.liquidity_grade === 'C' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                                  metrics?.liquidity_grade === 'D' ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                  'bg-rose-50 text-rose-600 border-rose-100'
+                                }`}>
+                                  {metrics?.liquidity_grade || '—'}
+                                </span>
+                              </div>
+                              <div className="flex flex-col gap-1.5 text-center">
+                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Liq Score</p>
+                                <p className="text-[9px] font-black text-slate-900">
+                                  {metrics?.liquidity_quality_score ?? '—'}<span className="text-slate-400 text-[7px]">/100</span>
+                                </p>
+                              </div>
+                              <div className="flex flex-col gap-1.5 text-right">
+                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Session</p>
+                                <span className={`px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest border inline-block ${
+                                  metrics?.time_regime === 'OPENING' || metrics?.time_regime === 'CLOSING' ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                  metrics?.time_regime === 'NORMAL' ? 'bg-slate-50 text-slate-500 border-slate-100' :
+                                  'bg-slate-50 text-slate-300 border-slate-100'
+                                }`}>
+                                  {metrics?.time_regime || '—'}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                         )}
 
                         <div className="flex items-center justify-between gap-4 pt-4 border-t border-slate-50">
                           <div className="flex items-center gap-2">
-                            <div className={`w-1.5 h-1.5 rounded-full ${metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-500' : metrics?.execution_style === 'AVOID' ? 'bg-rose-500' : 'bg-amber-500'}`} />
+                            <div className={`w-1.5 h-1.5 rounded-full ${
+                              metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-500' :
+                              metrics?.execution_style === 'AVOID' ? 'bg-rose-500' :
+                              metrics?.execution_style === 'CAUTION' ? 'bg-orange-500' :
+                              metrics?.execution_style === 'MARKET CLOSED' ? 'bg-slate-300' :
+                              'bg-amber-500'
+                            }`} />
                             <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
                               {getRecommendationHint(metrics)}
                             </p>
