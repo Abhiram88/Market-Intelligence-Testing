@@ -143,7 +143,21 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
         }
 
         const normalized = normalizeBreezeQuoteFromRow(data, symbol);
-        setQuotes(prev => ({ ...prev, [symbol]: normalized }));
+        setQuotes(prev => {
+          const existing = prev[symbol];
+          return {
+            ...prev,
+            [symbol]: {
+              ...normalized,
+      // Preserve non-zero H/L from previous ticks — Breeze sends them only when they change.
+              high: normalized.high !== 0 ? normalized.high : (existing?.high ?? 0),
+              low:  normalized.low  !== 0 ? normalized.low  : (existing?.low  ?? 0),
+              previous_close: normalized.previous_close !== 0
+                ? normalized.previous_close
+                : (existing?.previous_close ?? 0),
+            },
+          };
+        });
         setErrors(prev => {
           const next = { ...prev };
           delete next[symbol];

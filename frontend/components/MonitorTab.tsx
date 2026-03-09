@@ -27,11 +27,20 @@ const MonitorTab: React.FC = () => {
   // Called by PriorityStocksCard when a NIFTY tick arrives on the shared socket.
   const onNiftyTick = useCallback((data: Record<string, unknown>) => {
     const normalized = normalizeBreezeQuoteFromRow(data, 'NIFTY');
-    setTelemetry({
+    setTelemetry(prev => ({
+      // Keep mandatory identity fields from the new tick.
       ...normalized,
       dataSource: 'Breeze Direct' as const,
       errorType: 'none',
-    });
+      // Preserve the session high/low from previous ticks if the new tick delivers zeros.
+      // Breeze WebSocket ticks include H/L only when they change, so a 0 means "no update".
+      high: normalized.high !== 0 ? normalized.high : (prev?.high ?? 0),
+      low:  normalized.low  !== 0 ? normalized.low  : (prev?.low  ?? 0),
+      // Preserve previous_close if missing from the tick — needed for correct % change calc.
+      previous_close: normalized.previous_close !== 0
+        ? normalized.previous_close
+        : (prev?.previous_close ?? 0),
+    }));
   }, []);
 
   // Market Radar — works independently of Breeze session.

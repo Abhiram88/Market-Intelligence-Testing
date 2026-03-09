@@ -57,6 +57,18 @@ ai_client = None
 supabase = None
 mapping_cache = {}
 
+# Hard-coded NSE-symbol → Breeze-short-code overrides.
+# These are definitive: same set as breezeService.ts HARDCODED_MAPPINGS on the frontend.
+# Applied before Supabase lookup so the correct Breeze code is always used.
+BREEZE_SYMBOL_OVERRIDES: dict[str, str] = {
+    'NIFTY':      'NIFTY 50',   # NSE index — Breeze requires the space
+    'AHLUCONT':   'AHLCON',
+    'AXISCADES':  'AXIIT',
+    'MEDICO':     'MEDREM',
+    'WAAREERTL':  'SANADV',
+    'SANGHVIMOV': 'SANMOV',
+}
+
 # --- Real-time tick dispatch registry ---
 # Maps canonical frontend symbol -> set of Socket.IO SIDs subscribed to that symbol.
 # Allows multiple browser clients / components to share a single Breeze WebSocket feed.
@@ -282,6 +294,9 @@ def _global_on_ticks(ticks):
     """
     Single Breeze on_ticks callback that dispatches ticks to ALL registered Socket.IO SIDs.
     Replaces the per-SID closure approach that caused the second subscriber to overwrite the first.
+
+    Called from the Breeze WebSocket reader thread — must only use thread-safe Socket.IO operations.
+    We emit directly to each SID room; Socket.IO silently ignores emits to disconnected rooms.
     """
     raw = ticks.get("stock_code") or ticks.get("stock_name") or ticks.get("symbol") or ""
     token_match = re.match(r"^\d+\.\d+!(.+)$", str(raw))
@@ -293,10 +308,8 @@ def _global_on_ticks(ticks):
 
     for sid in list(_tick_registry.get(resolved, set())):
         try:
-            if socketio.server.manager.is_connected(sid, '/'):
-                socketio.emit('watchlist_update', payload, room=sid)
-            else:
-                _tick_registry.get(resolved, set()).discard(sid)
+            # Emit to the room for this SID; if disconnected, Socket.IO ignores it silently.
+            socketio.emit('watchlist_update', payload, room=sid)
         except Exception as e:
             logger.error(f"Tick dispatch error {resolved} -> {sid}: {e}")
 
@@ -347,7 +360,14 @@ def generate_with_model_fallback(prompt, sys_instr):
 
 
 def get_breeze_symbol(standard_symbol):
-    """Maps standard NSE symbols to Breeze short names using Supabase nse_master_list."""
+    """
+    Maps a canonical NSE symbol to the Breeze short code used for subscriptions.
+    Priority: BREEZE_SYMBOL_OVERRIDES (hardcoded) → mapping_cache → Supabase lookup → original.
+    """
+    # Hardcoded overrides take priority (e.g. NIFTY→'NIFTY 50', MEDICO→MEDREM).
+    if standard_symbol in BREEZE_SYMBOL_OVERRIDES:
+        return BREEZE_SYMBOL_OVERRIDES[standard_symbol]
+
     # FIX: use initialize_supabase() directly — not initialize_ai_clients()
     if not supabase:
         initialize_supabase()
@@ -1189,13 +1209,16 @@ def track_watchlist(stock_list, proxy_key, sid):
         return
 
     # Build the global symbol map used by _global_on_ticks to resolve tick symbols.
+    # Key insight: Breeze WebSocket ticks carry the Breeze short code (e.g. "NIFTY 50", "MEDREM"),
+    # so we must map BOTH the canonical frontend symbol AND the raw Breeze code to the frontend symbol.
     for symbol in stock_list:
         std = canonical_symbol(symbol)
-        breeze_code = canonical_symbol(get_breeze_symbol(std))
+        breeze_code = get_breeze_symbol(std)  # raw Breeze code, e.g. "NIFTY 50", "MEDREM"
         _registry_symbol_map[std] = std
-        _registry_symbol_map[breeze_code] = std
-        if std == "NIFTY":
-            _registry_symbol_map["NIFTY 50"] = std
+        # Canonical form of the Breeze code (strips "NIFTY 50" → "NIFTY", "MEDREM" stays)
+        _registry_symbol_map[canonical_symbol(breeze_code)] = std
+        # Also map the raw Breeze code directly (e.g. "NIFTY 50" with space)
+        _registry_symbol_map[breeze_code.strip().upper()] = std
 
     # Register this SID for each symbol so _global_on_ticks dispatches to it.
     for symbol in stock_list:
@@ -1204,20 +1227,26 @@ def track_watchlist(stock_list, proxy_key, sid):
     # Assign the global dispatcher once (idempotent — any subsequent assignment is the same function).
     client.on_ticks = _global_on_ticks
 
-    # Connect Breeze WebSocket if not already alive.
+    # Connect Breeze WebSocket.
+    # Clear _subscribed_breeze_codes first: a reconnecting WebSocket has no existing
+    # subscriptions, so we must not skip re-subscribing based on stale data.
+    _subscribed_breeze_codes.clear()
     try:
         client.ws_connect()
-        logger.info(f"Breeze WebSocket connected/re-connected for {sid}")
+        logger.info(f"Breeze WebSocket connected for {sid}")
     except Exception as e:
-        # ws_connect may raise if already connected; log but continue.
+        # ws_connect raises if already connected; safe to continue — feeds will be added below.
         logger.warning(f"ws_connect for {sid}: {e}")
 
-    # Subscribe to feeds that are not already active (shared WebSocket, shared feeds).
+    # Subscribe to Breeze feeds.
     newly_subscribed = []
     for symbol in stock_list:
-        breeze_code = canonical_symbol(get_breeze_symbol(symbol))
+        std = canonical_symbol(symbol)
+        # get_breeze_symbol returns the correct Breeze code (e.g. "NIFTY 50", "MEDREM").
+        # Do NOT call canonical_symbol on the result — it would turn "NIFTY 50" back to "NIFTY".
+        breeze_code = get_breeze_symbol(std)
         if breeze_code in _subscribed_breeze_codes:
-            logger.info(f"Feed already active: {symbol} ({breeze_code}) — skipping re-subscribe")
+            logger.info(f"Feed already active: {symbol} ({breeze_code}) — skipping")
             continue
         try:
             client.subscribe_feeds(
@@ -1229,9 +1258,9 @@ def track_watchlist(stock_list, proxy_key, sid):
             )
             _subscribed_breeze_codes.add(breeze_code)
             newly_subscribed.append((breeze_code, symbol))
-            logger.info(f"Subscribed to feed: {symbol} ({breeze_code})")
+            logger.info(f"Subscribed to feed: {symbol} → Breeze code '{breeze_code}'")
         except Exception as e:
-            logger.error(f"Failed to subscribe to {symbol}: {e}")
+            logger.error(f"Failed to subscribe to {symbol} ({breeze_code}): {e}")
 
     # Keep background task alive while this SID is connected.
     # Ticks arrive via _global_on_ticks — no polling needed.
