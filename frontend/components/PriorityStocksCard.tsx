@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { io, Socket } from 'socket.io-client';
 import { supabase } from '../lib/supabase';
-import { fetchQuote, fetchDepth, fetchHistorical, QuoteResponse, DepthResponse } from '../services/apiService';
+import { fetchHistorical } from '../services/apiService';
 import { getMarketSessionStatus } from '../services/marketService';
 import { getProxyBaseUrl, normalizeBreezeQuoteFromRow } from '../services/breezeService';
 import { LiquidityMetrics } from '../types';
@@ -10,30 +10,46 @@ import { X, ArrowUp, ArrowDown, Bookmark, AlertCircle } from 'lucide-react';
 interface PriorityStock {
   symbol: string;
   company_name: string;
-  last_price?: number;
-  change_val?: number;
-  change_percent?: number;
-  last_updated?: string;
 }
 
-const POLL_INTERVAL_OPEN_MS = 12000; // 12s when market open (socket is primary; REST is fallback)
+interface QuoteData {
+  last_traded_price: number;
+  change: number;
+  percent_change: number;
+  open: number;
+  high: number;
+  low: number;
+  previous_close: number;
+  volume: number;
+  ltp?: number;
+  ltp_percent_change?: number;
+  total_quantity_traded?: number;
+  best_bid_price?: number;
+  best_bid_quantity?: number;
+  best_offer_price?: number;
+  best_offer_quantity?: number;
+}
 
-export const PriorityStocksCard: React.FC = () => {
+interface PriorityStocksCardProps {
+  /** Called with the raw tick payload whenever a NIFTY tick arrives on the shared socket. */
+  onNiftyTick?: (data: Record<string, unknown>) => void;
+}
+
+export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyTick }) => {
   const [priorityStocks, setPriorityStocks] = useState<PriorityStock[]>([]);
-  const [quotes, setQuotes] = useState<Record<string, QuoteResponse>>({});
-  const [depths, setDepths] = useState<Record<string, DepthResponse>>({});
+  const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [historicalCache, setHistoricalCache] = useState<Record<string, number>>({});
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const [showRawFeed, setShowRawFeed] = useState(false);
-  
-  const isUpdatingRef = React.useRef(false);
+
+  // Keep a stable ref to onNiftyTick so the socket closure doesn't go stale.
+  const onNiftyTickRef = useRef(onNiftyTick);
+  useEffect(() => { onNiftyTickRef.current = onNiftyTick; }, [onNiftyTick]);
 
   const fetchTrackedSymbols = async () => {
     try {
-      const { data, error } = await supabase
-        .from('priority_stocks')
-        .select('*');
+      const { data, error } = await supabase.from('priority_stocks').select('*');
       if (error) {
         console.warn('Priority stocks fetch error:', error.message);
         return [];
@@ -42,15 +58,11 @@ export const PriorityStocksCard: React.FC = () => {
       const mapped: PriorityStock[] = data.map((row: Record<string, unknown>) => ({
         symbol: String(row.symbol ?? ''),
         company_name: String(row.company_name ?? ''),
-        last_price: typeof row.current_price === 'number' ? row.current_price : undefined,
-        change_percent: typeof row.percentage_change === 'number' ? row.percentage_change : undefined,
-        last_updated: row.last_update != null ? String(row.last_update) : undefined,
-        change_val: typeof row.change_value === 'number' ? row.change_value : undefined,
       }));
       setPriorityStocks(mapped);
       return data;
     } catch (e) {
-      console.error("Watchlist fetch failed:", e);
+      console.error('Watchlist fetch failed:', e);
     }
     return [];
   };
@@ -58,15 +70,13 @@ export const PriorityStocksCard: React.FC = () => {
   const refreshHistoricalData = async (symbol: string) => {
     try {
       const today = new Date();
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(today.getDate() - 40);
-
+      const fortyDaysAgo = new Date();
+      fortyDaysAgo.setDate(today.getDate() - 40);
       const bars = await fetchHistorical(
-        symbol, 
-        thirtyDaysAgo.toISOString().split('T')[0], 
+        symbol,
+        fortyDaysAgo.toISOString().split('T')[0],
         today.toISOString().split('T')[0]
       );
-
       if (bars.length > 0) {
         const last20 = bars.slice(-20);
         const avgVol = last20.reduce((acc: number, bar: any) => acc + parseFloat(bar.volume), 0) / last20.length;
@@ -77,68 +87,115 @@ export const PriorityStocksCard: React.FC = () => {
     }
   };
 
-  const updateQuotesBatch = React.useCallback(async (stocks: PriorityStock[]) => {
-    const marketStatus = getMarketSessionStatus();
-    // Only fetch live quotes during market hours — no data outside trading hours.
-    if (!marketStatus.isOpen) return;
-    if (document.hidden) return;
-
-    if (stocks.length === 0 || isUpdatingRef.current) return;
-    isUpdatingRef.current = true;
-
-    for (let i = 0; i < stocks.length; i++) {
-      const stock = stocks[i];
-      await new Promise(r => setTimeout(r, 80)); // Short stagger to avoid rate limits; socket is primary for real-time
-
-      try {
-        try {
-          const quote = await fetchQuote(stock.symbol);
-          setQuotes(prev => ({ ...prev, [stock.symbol]: quote! }));
-          setErrors(prev => {
-            const next = { ...prev };
-            delete next[stock.symbol];
-            return next;
-          });
-        } catch (qErr: any) {
-          // When market is closed, silently skip quote failures (session may not be active yet).
-          // Don't set error state — show "--" via fallback, not an ERROR badge.
-          if (!marketStatus.isOpen) {
-            console.warn(`Quote unavailable for ${stock.symbol} (market closed or session inactive)`);
-          } else {
-            setErrors(prev => ({ ...prev, [stock.symbol]: qErr.message }));
-          }
-        }
-
-        // Depth (bid/ask) is only meaningful during live trading; skip when market is closed.
-        if (marketStatus.isOpen) {
-          try {
-            const depth = await fetchDepth(stock.symbol);
-            setDepths(prev => ({ ...prev, [stock.symbol]: depth! }));
-          } catch (dErr) {
-            console.warn(`Depth failed for ${stock.symbol}`);
-          }
-        }
-
-        // Live prices stay in local state (quotes) from socket/REST; no DB write to avoid schema mismatch.
-      } catch (error) {
-        console.error(`Update failed for ${stock.symbol}`);
+  // Fetch watchlist on mount; kick off historical baseline fetches (not time-sensitive).
+  useEffect(() => {
+    const init = async () => {
+      const stocks = await fetchTrackedSymbols();
+      if (stocks.length > 0) {
+        stocks.forEach((s: any) => refreshHistoricalData(String(s.symbol)));
       }
-    }
-    isUpdatingRef.current = false;
+    };
+    init();
   }, []);
+
+  // Stable string key representing the current watchlist. Changes only when stocks are added/removed.
+  const watchlistKey = useMemo(
+    () => priorityStocks.map(s => s.symbol).join(','),
+    [priorityStocks]
+  );
+
+  // ── Single shared Socket.IO connection for NIFTY + all watchlist stocks ──────
+  // This avoids the Breeze on_ticks overwrite bug where a second socket subscription
+  // would replace the first subscriber's callback.
+  const socketRef = useRef<Socket | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    // Always subscribe to NIFTY; also subscribe to all watchlist stocks.
+    const symbolsToSubscribe = ['NIFTY', ...priorityStocks.map(s => s.symbol)];
+
+    const connect = () => {
+      const socket = io(getProxyBaseUrl(), {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        timeout: 10000,
+      });
+      socketRef.current = socket;
+
+      socket.on('connect', () => {
+        console.log('[PriorityStocksCard] Socket connected, subscribing:', symbolsToSubscribe);
+        socket.emit('subscribe_to_watchlist', {
+          stocks: symbolsToSubscribe,
+          proxy_key: localStorage.getItem('breeze_proxy_key') || '',
+        });
+      });
+
+      socket.on('watchlist_update', (data: Record<string, unknown>) => {
+        const symbol = String(data.symbol || '').toUpperCase();
+        if (!symbol) return;
+
+        if (symbol === 'NIFTY' || symbol === 'NIFTY 50') {
+          // Route to the Nifty card via the callback from MonitorTab.
+          onNiftyTickRef.current?.(data);
+          return;
+        }
+
+        const normalized = normalizeBreezeQuoteFromRow(data, symbol);
+        setQuotes(prev => ({ ...prev, [symbol]: normalized }));
+        setErrors(prev => {
+          const next = { ...prev };
+          delete next[symbol];
+          return next;
+        });
+      });
+
+      // If the proxy can't start the feed (no Breeze session yet), retry after 30s
+      // so that the subscription auto-resumes once the session is activated.
+      socket.on('watchlist_error', (err: Record<string, unknown>) => {
+        console.warn('[PriorityStocksCard] watchlist_error:', err?.error);
+        if (getMarketSessionStatus().isOpen && socket.connected) {
+          if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = setTimeout(() => {
+            if (socket.connected) {
+              console.log('[PriorityStocksCard] Retrying subscription after watchlist_error...');
+              socket.emit('subscribe_to_watchlist', {
+                stocks: symbolsToSubscribe,
+                proxy_key: localStorage.getItem('breeze_proxy_key') || '',
+              });
+            }
+          }, 30000);
+        }
+      });
+
+      socket.on('connect_error', (err: Error) => console.warn('[PriorityStocksCard] Socket connect error:', err.message));
+      socket.on('disconnect', () => console.log('[PriorityStocksCard] Socket disconnected'));
+    };
+
+    connect();
+
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      socketRef.current?.disconnect();
+      socketRef.current = null;
+    };
+  // Re-connect (and re-subscribe with new list) whenever the watchlist stock list changes.
+  // When a stock is removed, this cleanup disconnects the old socket, which triggers the proxy
+  // to unsubscribe its Breeze feeds and disconnect the Breeze WebSocket.
+  }, [watchlistKey]);  // Re-connect when the watchlist symbol list changes
 
   const calculateMetrics = (symbol: string): LiquidityMetrics | null => {
     const q = quotes[symbol];
-    const d = depths[symbol];
     const avgVol = historicalCache[symbol];
     if (!q) return null;
 
-    const bid = d?.best_bid_price || q.best_bid_price || 0;
-    const ask = d?.best_offer_price || q.best_offer_price || 0;
-    const bidQty = d?.best_bid_quantity || q.best_bid_quantity || 0;
-    const askQty = d?.best_offer_quantity || q.best_offer_quantity || 0;
+    const bid = q.best_bid_price || 0;
+    const ask = q.best_offer_price || 0;
+    const bidQty = q.best_bid_quantity || 0;
+    const askQty = q.best_offer_quantity || 0;
     const mid = (bid + ask) / 2;
-    
+
     const spread_pct = mid > 0 ? ((ask - bid) / mid) * 100 : null;
     const depth_ratio = (bidQty + 1) / (askQty + 1);
     const vol_today = q.total_quantity_traded || q.volume || 0;
@@ -152,12 +209,12 @@ export const PriorityStocksCard: React.FC = () => {
 
     const wick_ratio = (high - Math.max(open, close)) / range;
     const close_pos = (close - low) / range;
-    
+
     let regime: 'BREAKOUT' | 'DISTRIBUTION' | 'NEUTRAL' = 'NEUTRAL';
     if (wick_ratio > 0.55 && close_pos < 0.35 && vol_ratio && vol_ratio > 2.5) {
-        regime = 'DISTRIBUTION';
+      regime = 'DISTRIBUTION';
     } else if (close_pos > 0.70 && vol_ratio && vol_ratio > 2.0) {
-        regime = 'BREAKOUT';
+      regime = 'BREAKOUT';
     }
 
     let exec: 'LIMIT ONLY' | 'OK FOR MARKET' | 'AVOID' = 'LIMIT ONLY';
@@ -172,86 +229,29 @@ export const PriorityStocksCard: React.FC = () => {
       regime,
       execution_style: exec,
       bid, ask, bidQty, askQty,
-      avg_vol_20d: avgVol || null
+      avg_vol_20d: avgVol || null,
     };
   };
 
   const getRecommendationHint = (metrics: LiquidityMetrics | null) => {
-    if (!getMarketSessionStatus().isOpen) return "Market closed";
-    if (!metrics) return "Awaiting depth...";
-    if (metrics.execution_style === 'AVOID') return "Avoid thin liquidity";
-    if (metrics.regime === 'DISTRIBUTION') return "Sell-on-news risk; wait";
-    if (metrics.regime === 'BREAKOUT') return "Momentum OK if volume holds";
-    return "Watch confirmation";
+    if (!getMarketSessionStatus().isOpen) return 'Market closed';
+    if (!metrics) return 'Awaiting depth...';
+    if (metrics.execution_style === 'AVOID') return 'Avoid thin liquidity';
+    if (metrics.regime === 'DISTRIBUTION') return 'Sell-on-news risk; wait';
+    if (metrics.regime === 'BREAKOUT') return 'Momentum OK if volume holds';
+    return 'Watch confirmation';
   };
 
   const removeStock = async (symbol: string) => {
     const { error } = await supabase.from('priority_stocks').delete().eq('symbol', symbol);
     if (!error) {
+      // Removing from state triggers the socket effect to reconnect with the new (smaller) list,
+      // which causes the proxy to unsubscribe the removed symbol's Breeze feed automatically.
       setPriorityStocks(prev => prev.filter(s => s.symbol !== symbol));
+      setQuotes(prev => { const n = { ...prev }; delete n[symbol]; return n; });
+      setErrors(prev => { const n = { ...prev }; delete n[symbol]; return n; });
     }
   };
-
-  useEffect(() => {
-    // This effect handles the initial data load
-    const init = async () => {
-      const stocks = await fetchTrackedSymbols();
-      if (stocks.length > 0) {
-        updateQuotesBatch(stocks); // Fetch LTP from Breeze on mount (works even when market is closed)
-        stocks.forEach(s => refreshHistoricalData(s.symbol));
-      }
-    };
-    init();
-  }, [updateQuotesBatch]);
-
-  useEffect(() => {
-    if (priorityStocks.length === 0) return;
-    if (!getMarketSessionStatus().isOpen) return; // No polling outside trading hours
-    const poller = window.setInterval(() => {
-      updateQuotesBatch(priorityStocks);
-    }, POLL_INTERVAL_OPEN_MS);
-
-    return () => window.clearInterval(poller);
-  }, [priorityStocks, updateQuotesBatch]);
-
-  useEffect(() => {
-    // This effect handles the real-time updates
-    if (priorityStocks.length === 0) return;
-
-    const socket = io(getProxyBaseUrl(), {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      timeout: 10000
-    });
-
-    socket.on('connect', () => {
-        console.log('Socket connected');
-        const proxy_key = localStorage.getItem('breeze_proxy_key') || '';
-        socket.emit('subscribe_to_watchlist', {
-            stocks: priorityStocks.map(s => s.symbol),
-            proxy_key: proxy_key
-        });
-    });
-
-    socket.on('watchlist_update', (data: Record<string, unknown>) => {
-        const symbol = String(data.symbol || '').toUpperCase();
-        if (!symbol) return;
-        const normalized = normalizeBreezeQuoteFromRow(data, symbol);
-        setQuotes(prev => ({ ...prev, [symbol]: normalized }));
-    });
-
-    socket.on('disconnect', () => {
-        console.log('Socket disconnected');
-    });
-
-    // Cleanup on component unmount
-    return () => {
-        socket.disconnect();
-    };
-  }, [priorityStocks.map(s => s.symbol).join(',')]);
-
 
   const marketStatus = getMarketSessionStatus();
 
@@ -268,15 +268,15 @@ export const PriorityStocksCard: React.FC = () => {
           <h2 className="text-lg font-black text-slate-900 uppercase tracking-tighter mt-1">Watchlist</h2>
         </div>
         <div className="flex flex-col items-end">
-           <button 
-             onClick={() => setShowRawFeed(!showRawFeed)}
-             className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border transition-all ${showRawFeed ? 'bg-indigo-600 text-white border-indigo-600' : 'text-slate-400 border-slate-100 hover:bg-slate-50'}`}
-           >
-             Raw Feed
-           </button>
-           <p className="text-[9px] font-black text-indigo-600 uppercase tracking-tight mt-1">
-             {marketStatus.isOpen ? '80ms stagger' : 'Polling suspended'}
-           </p>
+          <button
+            onClick={() => setShowRawFeed(!showRawFeed)}
+            className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border transition-all ${showRawFeed ? 'bg-indigo-600 text-white border-indigo-600' : 'text-slate-400 border-slate-100 hover:bg-slate-50'}`}
+          >
+            Raw Feed
+          </button>
+          <p className="text-[9px] font-black text-indigo-600 uppercase tracking-tight mt-1">
+            {marketStatus.isOpen ? 'Live tick feed' : 'Polling suspended'}
+          </p>
         </div>
       </div>
 
@@ -298,7 +298,7 @@ export const PriorityStocksCard: React.FC = () => {
 
             return (
               <div key={stock.symbol} className="group relative rounded-xl border border-slate-100 bg-slate-50 hover:bg-white hover:border-indigo-100 hover:shadow-md transition-all duration-300 overflow-hidden">
-                <div 
+                <div
                   className="flex items-center justify-between p-3.5 cursor-pointer"
                   onClick={() => setExpandedSymbol(isExpanded ? null : stock.symbol)}
                 >
@@ -309,7 +309,7 @@ export const PriorityStocksCard: React.FC = () => {
                     </div>
                     <span className="text-[7px] font-bold text-slate-400 uppercase truncate max-w-[100px]">{stock.company_name}</span>
                   </div>
-                  
+
                   <div className="flex items-center gap-4">
                     {displayPrice !== null ? (
                       <div className="text-right">
@@ -323,12 +323,12 @@ export const PriorityStocksCard: React.FC = () => {
                       </div>
                     ) : (
                       <div className="text-right">
-                         <p className="text-xs font-black text-slate-300 tabular-nums">--</p>
-                         <p className="text-[8px] font-black text-slate-200 uppercase">{error ? 'Error' : 'Awaiting...'}</p>
+                        <p className="text-xs font-black text-slate-300 tabular-nums">--</p>
+                        <p className="text-[8px] font-black text-slate-200 uppercase">{error ? 'Error' : 'Awaiting...'}</p>
                       </div>
                     )}
-                    
-                    <button 
+
+                    <button
                       onClick={(e) => { e.stopPropagation(); removeStock(stock.symbol); }}
                       className="p-1.5 text-slate-300 hover:text-rose-500 transition-all rounded hover:bg-rose-50"
                     >
@@ -370,7 +370,7 @@ export const PriorityStocksCard: React.FC = () => {
                                 <div>
                                   <span className={`px-2 py-1 rounded text-[10px] font-black tabular-nums border inline-block ${
                                     !metrics || metrics.spread_pct === null ? 'bg-slate-50 text-slate-400 border-slate-100' :
-                                    metrics.spread_pct < 0.15 ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
+                                    metrics.spread_pct < 0.15 ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
                                     metrics.spread_pct < 0.50 ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-rose-50 text-rose-600 border-rose-100'
                                   }`}>
                                     {metrics?.spread_pct !== null && metrics?.spread_pct !== undefined ? metrics.spread_pct.toFixed(3) + '%' : '—'}
@@ -419,16 +419,16 @@ export const PriorityStocksCard: React.FC = () => {
                         )}
 
                         <div className="flex items-center justify-between gap-4 pt-4 border-t border-slate-50">
-                           <div className="flex items-center gap-2">
-                             <div className={`w-1.5 h-1.5 rounded-full ${metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-500' : metrics?.execution_style === 'AVOID' ? 'bg-rose-500' : 'bg-amber-500'}`} />
-                             <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                               {getRecommendationHint(metrics)}
-                             </p>
-                           </div>
-                           <div className="flex items-baseline gap-1">
-                              <span className="text-[7px] font-black text-slate-400 uppercase">Avg Vol (20D):</span>
-                              <span className="text-[8px] font-bold text-slate-600">{metrics?.avg_vol_20d ? (metrics.avg_vol_20d / 1000000).toFixed(1) : '—'}M</span>
-                           </div>
+                          <div className="flex items-center gap-2">
+                            <div className={`w-1.5 h-1.5 rounded-full ${metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-500' : metrics?.execution_style === 'AVOID' ? 'bg-rose-500' : 'bg-amber-500'}`} />
+                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                              {getRecommendationHint(metrics)}
+                            </p>
+                          </div>
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-[7px] font-black text-slate-400 uppercase">Avg Vol (20D):</span>
+                            <span className="text-[8px] font-bold text-slate-600">{metrics?.avg_vol_20d ? (metrics.avg_vol_20d / 1000000).toFixed(1) : '—'}M</span>
+                          </div>
                         </div>
                       </>
                     )}
@@ -442,7 +442,7 @@ export const PriorityStocksCard: React.FC = () => {
 
       <div className="mt-4 pt-4 border-t border-slate-100 relative z-10">
         <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest leading-tight">
-          {marketStatus.isOpen ? 'Microstructure audit active. Socket + 12s REST fallback.' : 'Market closed. Live data available when market opens.'}
+          {marketStatus.isOpen ? 'Real-time tick feed active. Breeze WebSocket.' : 'Market closed. Live data available when market opens.'}
         </p>
       </div>
     </div>

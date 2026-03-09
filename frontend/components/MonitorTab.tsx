@@ -1,22 +1,19 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Card, CardContent } from './ui/Card';
 import { summarizeMarketOutlook, analyzeStockDeepDive, fetchQuote, fetchDepth } from '../services/apiService';
-import { getMarketSessionStatus, fetchRealtimeMarketTelemetry, MarketTelemetry } from '../services/marketService';
+import { getMarketSessionStatus, MarketTelemetry } from '../services/marketService';
 import { normalizeBreezeQuoteFromRow } from '../services/breezeService';
 import { NewsAttribution, MarketLog, LiquidityMetrics } from '../types';
 import { Search, Zap, Loader2, Info, AlertCircle } from 'lucide-react';
 import { PriorityStocksCard } from './PriorityStocksCard';
 import { NiftyRealtimeCard } from './NiftyRealtimeCard';
-import { io } from 'socket.io-client';
-import { getProxyBaseUrl } from '../services/breezeService';
 
 const MonitorTab: React.FC = () => {
-  // Intelligence Section State
   const [activeIntelTab, setActiveIntelTab] = useState<'radar' | 'deepdive'>('radar');
   const [attribution, setAttribution] = useState<NewsAttribution | null>(null);
   const [isAnalyzingMarket, setIsAnalyzingMarket] = useState(false);
-  
+
   const [stockSymbol, setStockSymbol] = useState('');
   const [stockAnalysis, setStockAnalysis] = useState<NewsAttribution | null>(null);
   const [stockMetrics, setStockMetrics] = useState<LiquidityMetrics | null>(null);
@@ -24,102 +21,49 @@ const MonitorTab: React.FC = () => {
   const [intelError, setIntelError] = useState<string | null>(null);
 
   const [telemetry, setTelemetry] = useState<MarketTelemetry | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
 
   const marketStatus = getMarketSessionStatus();
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const fetchData = async () => {
-      try {
-        const data = await fetchRealtimeMarketTelemetry();
-        if (isMounted) setTelemetry(data);
-      } catch (e: any) {
-        console.warn('Failed to refresh Nifty telemetry:', e?.message || e);
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
-    };
-
-    fetchData(); // Initial fetch
-    // When open: poll every 3s (socket is primary; REST is fallback).
-    // When closed: poll every 5 minutes — LTP doesn't change, Breeze also throttles to 5 min.
-    const { isOpen } = getMarketSessionStatus();
-    const fallbackInterval = window.setInterval(fetchData, isOpen ? 3000 : 5 * 60 * 1000);
-
-    const socket = io(getProxyBaseUrl(), {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      timeout: 10000
+  // Called by PriorityStocksCard when a NIFTY tick arrives on the shared socket.
+  const onNiftyTick = useCallback((data: Record<string, unknown>) => {
+    const normalized = normalizeBreezeQuoteFromRow(data, 'NIFTY');
+    setTelemetry({
+      ...normalized,
+      dataSource: 'Breeze Direct' as const,
+      errorType: 'none',
     });
-
-    socket.on('connect', () => {
-        console.log('Nifty socket connected');
-        const proxy_key = localStorage.getItem('breeze_proxy_key') || '';
-        socket.emit('subscribe_to_watchlist', {
-            stocks: ['NIFTY'],
-            proxy_key: proxy_key
-        });
-    });
-
-    socket.on('watchlist_update', (data: Record<string, unknown>) => {
-      const symbol = String(data.symbol || '').toUpperCase();
-      if (symbol !== 'NIFTY' && symbol !== 'NIFTY 50') return;
-      const normalized = normalizeBreezeQuoteFromRow(data, 'NIFTY');
-      setTelemetry({
-        ...normalized,
-        dataSource: 'Breeze Direct' as const,
-        errorType: 'none'
-      });
-    });
-
-    socket.on('connect_error', (err) => {
-        console.log('Nifty socket connection error:', err);
-    });
-
-    socket.on('disconnect', () => {
-        console.log('Nifty socket disconnected');
-    });
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(fallbackInterval);
-      socket.disconnect();
-    };
   }, []);
 
+  // Market Radar — works independently of Breeze session.
+  // Uses Google Gemini + Google Search grounding, so no live Nifty data is required.
   const handleMarketAnalysis = async () => {
     setIsAnalyzingMarket(true);
     setIntelError(null);
-    if (!telemetry) {
-      setIntelError("Market data is not available yet. Please try again in a moment.");
-      setIsAnalyzingMarket(false);
-      return;
-    }
+
+    const today = new Date().toISOString().split('T')[0];
+    // Pass whatever telemetry we have; the proxy handles null/zero values via Google Search.
     const log: MarketLog = {
       id: `log-${Date.now()}`,
-      log_date: new Date().toISOString().split('T')[0],
-      ltp: telemetry.last_traded_price,
-      points_change: telemetry.change,
-      change_percent: telemetry.percent_change,
-      day_high: telemetry.high,
-      day_low: telemetry.low,
-      volume: telemetry.volume,
-      source: telemetry.dataSource as string,
+      log_date: today,
+      ltp: telemetry?.last_traded_price ?? 0,
+      points_change: telemetry?.change ?? 0,
+      change_percent: telemetry?.percent_change ?? 0,
+      day_high: telemetry?.high ?? 0,
+      day_low: telemetry?.low ?? 0,
+      volume: telemetry?.volume ?? 0,
+      source: telemetry?.dataSource ?? 'Google Search',
       is_live: marketStatus.isOpen,
-      niftyClose: telemetry.last_traded_price,
-      niftyChange: telemetry.change,
-      niftyChangePercent: telemetry.percent_change,
-      date: new Date().toISOString().split('T')[0]
+      niftyClose: telemetry?.last_traded_price ?? 0,
+      niftyChange: telemetry?.change ?? 0,
+      niftyChangePercent: telemetry?.percent_change ?? 0,
+      date: today,
     };
+
     try {
       const result = await summarizeMarketOutlook(log);
       setAttribution(result);
     } catch (e: any) {
-      setIntelError(e.message || "Failed to synthesize market intelligence.");
+      setIntelError(e.message || 'Failed to synthesize market intelligence.');
     } finally {
       setIsAnalyzingMarket(false);
     }
@@ -169,7 +113,7 @@ const MonitorTab: React.FC = () => {
       const result = await analyzeStockDeepDive(symbol);
       setStockAnalysis(result);
     } catch (e: any) {
-      const msg = e?.message || "Failed to perform deep dive.";
+      const msg = e?.message || 'Failed to perform deep dive.';
       setIntelError(msg);
     } finally {
       setIsAnalyzingStock(false);
@@ -179,9 +123,10 @@ const MonitorTab: React.FC = () => {
   return (
     <div className="space-y-8 w-full">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <NiftyRealtimeCard telemetry={telemetry} isLoading={isLoading} />
+        <NiftyRealtimeCard telemetry={telemetry} />
         <div className="lg:col-span-2">
-          <PriorityStocksCard />
+          {/* PriorityStocksCard manages the single shared socket for both NIFTY and watchlist stocks */}
+          <PriorityStocksCard onNiftyTick={onNiftyTick} />
         </div>
       </div>
 

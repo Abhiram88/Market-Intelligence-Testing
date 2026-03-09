@@ -5,7 +5,6 @@ import { Activity, Zap, AlertTriangle } from 'lucide-react';
 
 interface NiftyRealtimeCardProps {
   telemetry: MarketTelemetry | null;
-  isLoading: boolean;
 }
 
 const formatVolume = (vol: number) => {
@@ -13,8 +12,7 @@ const formatVolume = (vol: number) => {
   return `${(vol / 1000000).toFixed(2)}M`;
 };
 
-export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry, isLoading }) => {
-  
+export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry }) => {
 
   const isPositive = telemetry ? telemetry.change >= 0 : false;
 
@@ -34,22 +32,22 @@ export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry,
       );
     }
     if (telemetry?.dataSource === 'Breeze Direct') {
-        return (
-            <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-green-900/30 border-green-800/50">
-              <span className="flex h-2 w-2 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-green-400"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-              </span>
-              <span className="text-[10px] font-bold tracking-widest uppercase text-green-400">REAL-TIME FEED</span>
-            </div>
-        );
+      return (
+        <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-green-900/30 border-green-800/50">
+          <span className="flex h-2 w-2 relative">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-green-400"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+          </span>
+          <span className="text-[10px] font-bold tracking-widest uppercase text-green-400">REAL-TIME FEED</span>
+        </div>
+      );
     }
 
     return (
-        <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-slate-800/30 border-slate-700/50">
-          <Zap className="w-3 h-3 text-slate-400 animate-pulse" />
-          <span className="text-[10px] font-bold tracking-widest uppercase text-slate-400">ESTABLISHING LINK</span>
-        </div>
+      <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-slate-800/30 border-slate-700/50">
+        <Zap className="w-3 h-3 text-slate-400 animate-pulse" />
+        <span className="text-[10px] font-bold tracking-widest uppercase text-slate-400">ESTABLISHING LINK</span>
+      </div>
     );
   };
 
@@ -91,9 +89,7 @@ export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry,
           </>
         ) : (
           <div className="h-48 flex flex-col items-center justify-center text-slate-500">
-            {isLoading ? (
-              <p>Connecting to live feed…</p>
-            ) : !getMarketSessionStatus().isOpen ? (
+            {!getMarketSessionStatus().isOpen ? (
               <p className="text-center text-slate-500 font-medium">Market closed</p>
             ) : (
               <p>Waiting for live data…</p>

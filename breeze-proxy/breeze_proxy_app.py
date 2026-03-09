@@ -57,6 +57,13 @@ ai_client = None
 supabase = None
 mapping_cache = {}
 
+# --- Real-time tick dispatch registry ---
+# Maps canonical frontend symbol -> set of Socket.IO SIDs subscribed to that symbol.
+# Allows multiple browser clients / components to share a single Breeze WebSocket feed.
+_tick_registry: dict[str, set] = {}   # symbol -> set(sid)
+_registry_symbol_map: dict[str, str] = {}   # canonical raw_symbol from Breeze -> frontend symbol
+_subscribed_breeze_codes: set[str] = set()  # breeze stock_codes with active subscriptions
+
 
 # ─────────────────────────────────────────────
 # HOME
@@ -269,6 +276,39 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
         "low": to_float(ticks.get("low", 0)),
     })
     return normalized
+
+
+def _global_on_ticks(ticks):
+    """
+    Single Breeze on_ticks callback that dispatches ticks to ALL registered Socket.IO SIDs.
+    Replaces the per-SID closure approach that caused the second subscriber to overwrite the first.
+    """
+    raw = ticks.get("stock_code") or ticks.get("stock_name") or ticks.get("symbol") or ""
+    token_match = re.match(r"^\d+\.\d+!(.+)$", str(raw))
+    if token_match:
+        raw = token_match.group(1)
+
+    resolved = _registry_symbol_map.get(canonical_symbol(raw)) or canonical_symbol(raw)
+    payload = normalize_tick_for_frontend(ticks, resolved)
+
+    for sid in list(_tick_registry.get(resolved, set())):
+        try:
+            if socketio.server.manager.is_connected(sid, '/'):
+                socketio.emit('watchlist_update', payload, room=sid)
+            else:
+                _tick_registry.get(resolved, set()).discard(sid)
+        except Exception as e:
+            logger.error(f"Tick dispatch error {resolved} -> {sid}: {e}")
+
+
+def _register_tick_sid(symbol: str, sid: str) -> None:
+    _tick_registry.setdefault(symbol, set()).add(sid)
+
+
+def _unregister_sid(sid: str) -> None:
+    """Remove a disconnected SID from all registry entries."""
+    for sym_sids in _tick_registry.values():
+        sym_sids.discard(sid)
 
 
 def get_gemini_model_candidates():
@@ -486,17 +526,36 @@ def summarize_market_outlook():
 
     log = request.json
     log_date = log.get('log_date', str(get_ist_now().date()))
-    direction = "upward (BULLISH)" if log.get('niftyChange', 0) >= 0 else "downward (BEARISH)"
+
+    nifty_close = log.get('niftyClose') or log.get('ltp') or 0
+    nifty_change = log.get('niftyChange') or log.get('points_change') or 0
+    nifty_pct = log.get('niftyChangePercent') or log.get('change_percent') or 0
+    have_live_data = bool(nifty_close and nifty_close != 0)
+
+    direction = "upward (BULLISH)" if (nifty_change or 0) >= 0 else "downward (BEARISH)"
+
+    if have_live_data:
+        price_context = (
+            f"The market closed at {nifty_close}, with a change of {nifty_change} points "
+            f"({nifty_pct}%). The session trend was {direction}."
+        )
+    else:
+        price_context = (
+            "Live Nifty price data is not available at the moment. "
+            "Use your Google Search capability to find the Nifty 50's actual closing price, "
+            f"change, and the key market drivers for {log_date}."
+        )
 
     sys_instr = (
         "You are a Senior Equity Analyst and Financial Journalist for a top-tier publication, "
         "specializing in the Indian Equity Markets. Your task is to synthesize a compelling and "
         "insightful market summary that explains the key drivers behind the Nifty 50's performance "
-        "for a given day. You must provide a clear narrative, supported by data and specific events."
+        "for a given day. You must provide a clear narrative, supported by data and specific events. "
+        "When live price data is not provided, use Google Search to find the actual market data."
     )
 
     prompt = f"""Provide a comprehensive market summary for the Nifty 50 on {log_date}.
-The market closed at {log.get('niftyClose')}, with a change of {log.get('niftyChange')} points ({log.get('niftyChangePercent')}%). The session trend was {direction}.
+{price_context}
 
 Your analysis should be a narrative of at least 300 words, explaining the 'why' behind the market's movement.
 
@@ -1099,7 +1158,9 @@ def handle_connect():
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    logger.info(f"Client disconnected: {request.sid}")
+    sid = request.sid
+    logger.info(f"Client disconnected: {sid}")
+    _unregister_sid(sid)
 
 
 @socketio.on('subscribe_to_watchlist')
@@ -1114,61 +1175,53 @@ def handle_watchlist_subscription(data):
 def track_watchlist(stock_list, proxy_key, sid):
     """
     Uses Breeze WebSocket feeds for real-time watchlist updates.
-    Subscribes once per stock and emits ticks via callback — no REST polling.
+
+    Uses a module-level _tick_registry so that multiple Socket.IO clients (e.g., the
+    Nifty card socket and the Watchlist socket in the browser) each receive the ticks
+    they subscribed to, without one overwriting the other's on_ticks callback.
+
+    When the SID disconnects, its registry entries are cleaned up and any Breeze feeds
+    that have no remaining subscribers are unsubscribed.
     """
+    global _subscribed_breeze_codes
+
     client, err_resp, _ = ensure_breeze_session()
     if err_resp:
         logger.error(f"Could not get Breeze session for watchlist (sid={sid}).")
         socketio.emit('watchlist_error', {"error": "Breeze session not available"}, room=sid)
         return
 
-    # Build aliases: any incoming identifier -> frontend standard symbol
-    symbol_map = {}
+    # Build the global symbol map used by _global_on_ticks to resolve tick symbols.
     for symbol in stock_list:
         std = canonical_symbol(symbol)
         breeze_code = canonical_symbol(get_breeze_symbol(std))
-        symbol_map[std] = std
-        symbol_map[breeze_code] = std
+        _registry_symbol_map[std] = std
+        _registry_symbol_map[breeze_code] = std
         if std == "NIFTY":
-            symbol_map["NIFTY 50"] = std
+            _registry_symbol_map["NIFTY 50"] = std
 
-    def on_ticks(ticks):
-        """Callback fired by Breeze WebSocket on every price update."""
-        try:
-            # FIX: pass required '/' namespace argument to is_connected
-            if not socketio.server.manager.is_connected(sid, '/'):
-                return
+    # Register this SID for each symbol so _global_on_ticks dispatches to it.
+    for symbol in stock_list:
+        _register_tick_sid(canonical_symbol(symbol), sid)
 
-            # Breeze quote ticks may contain stock_code, stock_name, or token in symbol (e.g., "4.1!NIFTY 50")
-            raw_symbol = ticks.get("stock_code") or ticks.get("stock_name") or ticks.get("symbol") or ""
-            token_match = re.match(r"^\d+\.\d+!(.+)$", str(raw_symbol))
-            if token_match:
-                raw_symbol = token_match.group(1)
+    # Assign the global dispatcher once (idempotent — any subsequent assignment is the same function).
+    client.on_ticks = _global_on_ticks
 
-            resolved_symbol = symbol_map.get(canonical_symbol(raw_symbol))
-            if not resolved_symbol:
-                # last-resort fallback for single-subscription clients
-                resolved_symbol = canonical_symbol(stock_list[0]) if len(stock_list) == 1 else canonical_symbol(raw_symbol)
-
-            payload = normalize_tick_for_frontend(ticks, resolved_symbol)
-            socketio.emit('watchlist_update', payload, room=sid)
-        except Exception as e:
-            logger.error(f"Error emitting tick to {sid}: {e}")
-
-    # Connect Breeze WebSocket and assign tick callback
+    # Connect Breeze WebSocket if not already alive.
     try:
-        client.on_ticks = on_ticks
         client.ws_connect()
-        logger.info(f"Breeze WebSocket connected for client {sid}")
+        logger.info(f"Breeze WebSocket connected/re-connected for {sid}")
     except Exception as e:
-        logger.error(f"Breeze WebSocket connection failed for {sid}: {e}")
-        socketio.emit('watchlist_error', {"error": "WebSocket connection failed"}, room=sid)
-        return
+        # ws_connect may raise if already connected; log but continue.
+        logger.warning(f"ws_connect for {sid}: {e}")
 
-    # Subscribe to each stock feed
-    subscribed_codes = []
+    # Subscribe to feeds that are not already active (shared WebSocket, shared feeds).
+    newly_subscribed = []
     for symbol in stock_list:
         breeze_code = canonical_symbol(get_breeze_symbol(symbol))
+        if breeze_code in _subscribed_breeze_codes:
+            logger.info(f"Feed already active: {symbol} ({breeze_code}) — skipping re-subscribe")
+            continue
         try:
             client.subscribe_feeds(
                 exchange_code="NSE",
@@ -1177,16 +1230,16 @@ def track_watchlist(stock_list, proxy_key, sid):
                 get_exchange_quotes=True,
                 get_market_depth=False
             )
-            subscribed_codes.append((breeze_code, symbol))
+            _subscribed_breeze_codes.add(breeze_code)
+            newly_subscribed.append((breeze_code, symbol))
             logger.info(f"Subscribed to feed: {symbol} ({breeze_code})")
         except Exception as e:
             logger.error(f"Failed to subscribe to {symbol}: {e}")
 
-    # Keep background task alive while client is connected
-    # Ticks arrive via on_ticks callback above — no polling needed here
+    # Keep background task alive while this SID is connected.
+    # Ticks arrive via _global_on_ticks — no polling needed.
     while True:
         try:
-            # FIX: pass '/' namespace to is_connected
             if not socketio.server.manager.is_connected(sid, '/'):
                 logger.info(f"Client {sid} disconnected — cleaning up feeds.")
                 break
@@ -1194,25 +1247,35 @@ def track_watchlist(stock_list, proxy_key, sid):
             break
         socketio.sleep(5)
 
-    # Clean up: unsubscribe feeds and disconnect WebSocket
-    for breeze_code, symbol in subscribed_codes:
-        try:
-            client.unsubscribe_feeds(
-                exchange_code="NSE",
-                stock_code=breeze_code,
-                product_type="cash",
-                get_exchange_quotes=True,
-                get_market_depth=False
-            )
-            logger.info(f"Unsubscribed feed: {symbol} ({breeze_code})")
-        except Exception as e:
-            logger.error(f"Error unsubscribing {symbol}: {e}")
+    # SID disconnected: remove from registry (also done in handle_disconnect, but belt-and-suspenders).
+    _unregister_sid(sid)
 
-    try:
-        client.ws_disconnect()
-        logger.info(f"Breeze WebSocket disconnected for client {sid}")
-    except Exception as e:
-        logger.error(f"Error disconnecting WebSocket for {sid}: {e}")
+    # Unsubscribe feeds that now have no registered subscribers.
+    for breeze_code, symbol in newly_subscribed:
+        # Check if any other SID still needs this symbol.
+        std = canonical_symbol(symbol)
+        remaining = _tick_registry.get(std, set())
+        if not remaining:
+            try:
+                client.unsubscribe_feeds(
+                    exchange_code="NSE",
+                    stock_code=breeze_code,
+                    product_type="cash",
+                    get_exchange_quotes=True,
+                    get_market_depth=False
+                )
+                _subscribed_breeze_codes.discard(breeze_code)
+                logger.info(f"Unsubscribed feed (no more subscribers): {symbol} ({breeze_code})")
+            except Exception as e:
+                logger.error(f"Error unsubscribing {symbol}: {e}")
+
+    # Disconnect Breeze WebSocket only when there are no more active subscribers at all.
+    if not any(s for sids in _tick_registry.values() for s in sids):
+        try:
+            client.ws_disconnect()
+            logger.info("Breeze WebSocket disconnected — no more subscribers")
+        except Exception as e:
+            logger.error(f"Error disconnecting WebSocket: {e}")
 
 
 # ─────────────────────────────────────────────
