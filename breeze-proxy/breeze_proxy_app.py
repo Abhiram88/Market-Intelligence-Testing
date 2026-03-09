@@ -1,4 +1,5 @@
 import secrets
+import queue as _stdlib_queue
 from flask import Flask, request, jsonify
 from flask_cors import CORS, cross_origin
 from flask_socketio import SocketIO
@@ -74,8 +75,10 @@ mapping_cache = {}
 # Hard-coded NSE-symbol → Breeze-short-code overrides.
 # These are definitive: same set as breezeService.ts HARDCODED_MAPPINGS on the frontend.
 # Applied before Supabase lookup so the correct Breeze code is always used.
+# NOTE: NIFTY uses stock_code="NIFTY" directly — confirmed working in local test.
+#       Do NOT map it to "NIFTY 50": the Breeze WebSocket accepts "NIFTY" for NSE NIFTY 50
+#       and ticks come back with stock_code="NIFTY", which the registry resolves correctly.
 BREEZE_SYMBOL_OVERRIDES: dict[str, str] = {
-    'NIFTY':      'NIFTY 50',   # NSE index — Breeze requires the space
     'AHLUCONT':   'AHLCON',
     'AXISCADES':  'AXIIT',
     'MEDICO':     'MEDREM',
@@ -89,6 +92,12 @@ BREEZE_SYMBOL_OVERRIDES: dict[str, str] = {
 _tick_registry: dict[str, set] = {}   # symbol -> set(sid)
 _registry_symbol_map: dict[str, str] = {}   # canonical raw_symbol from Breeze -> frontend symbol
 _subscribed_breeze_codes: set[str] = set()  # breeze stock_codes with active subscriptions
+
+# Thread-safe queue: Breeze's WebSocket reader thread puts raw ticks here;
+# the _run_tick_dispatcher greenlet drains the queue and calls socketio.emit.
+# This bridges Breeze's native/green thread context to the Flask-SocketIO event loop.
+_tick_dispatch_queue: "_stdlib_queue.SimpleQueue[dict]" = _stdlib_queue.SimpleQueue()
+_tick_dispatcher_started: bool = False
 
 
 # ─────────────────────────────────────────────
@@ -306,26 +315,65 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
 
 def _global_on_ticks(ticks):
     """
-    Single Breeze on_ticks callback that dispatches ticks to ALL registered Socket.IO SIDs.
-    Replaces the per-SID closure approach that caused the second subscriber to overwrite the first.
+    Single Breeze on_ticks callback — assigned to breeze_client.on_ticks.
 
-    Called from the Breeze WebSocket reader thread — must only use thread-safe Socket.IO operations.
-    We emit directly to each SID room; Socket.IO silently ignores emits to disconnected rooms.
+    Called from the Breeze WebSocket reader thread (green thread under gunicorn+eventlet).
+    NEVER call socketio.emit() directly here: doing so from within Breeze's callback context
+    is unreliable with gunicorn+eventlet and silently drops events.
+
+    Instead, put the raw tick dict into _tick_dispatch_queue (thread-safe SimpleQueue).
+    The _run_tick_dispatcher background greenlet drains the queue and does the actual emit
+    from within the Flask-SocketIO event loop where socketio.emit() works correctly.
+    """
+    if ticks:
+        logger.debug(f"[on_ticks] Tick received: stock_code={ticks.get('stock_code')!r} last={ticks.get('last')!r}")
+        _tick_dispatch_queue.put(dict(ticks))
+
+
+def _dispatch_tick(ticks: dict) -> None:
+    """
+    Resolve the Breeze tick's stock_code to the frontend symbol and emit
+    a watchlist_update event to all subscribed Socket.IO SIDs.
+
+    Runs from the _run_tick_dispatcher greenlet — safe to call socketio.emit() here.
     """
     raw = ticks.get("stock_code") or ticks.get("stock_name") or ticks.get("symbol") or ""
-    token_match = re.match(r"^\d+\.\d+!(.+)$", str(raw))
+    # Breeze sometimes sends stock_code in token format: "4.1!NIFTY" or "1!NIFTY"
+    token_match = re.match(r"^\d+\.?\d*!(.+)$", str(raw))
     if token_match:
         raw = token_match.group(1)
 
     resolved = _registry_symbol_map.get(canonical_symbol(raw)) or canonical_symbol(raw)
     payload = normalize_tick_for_frontend(ticks, resolved)
 
-    for sid in list(_tick_registry.get(resolved, set())):
+    targets = list(_tick_registry.get(resolved, set()))
+    logger.debug(f"[dispatch] symbol={resolved!r} ltp={payload.get('ltp')} targets={targets}")
+
+    for sid in targets:
         try:
-            # Emit to the room for this SID; if disconnected, Socket.IO ignores it silently.
-            socketio.emit('watchlist_update', payload, room=sid)
+            socketio.emit('watchlist_update', payload, to=sid, namespace='/')
         except Exception as e:
             logger.error(f"Tick dispatch error {resolved} -> {sid}: {e}")
+
+
+def _run_tick_dispatcher():
+    """
+    Flask-SocketIO background task (eventlet greenlet) that drains _tick_dispatch_queue
+    and calls _dispatch_tick for each tick.
+
+    Runs for the lifetime of the server. Uses socketio.sleep() to yield cooperatively
+    so other greenlets (HTTP handlers, Socket.IO heartbeats) can run between polls.
+    """
+    logger.info("[dispatcher] Tick dispatcher started.")
+    while True:
+        # Drain all pending ticks without blocking before yielding.
+        while True:
+            try:
+                ticks = _tick_dispatch_queue.get_nowait()
+                _dispatch_tick(ticks)
+            except _stdlib_queue.Empty:
+                break
+        socketio.sleep(0.005)  # 5 ms cooperative yield — low latency with cooperative multitasking
 
 
 def _register_tick_sid(symbol: str, sid: str) -> None:
@@ -378,7 +426,7 @@ def get_breeze_symbol(standard_symbol):
     Maps a canonical NSE symbol to the Breeze short code used for subscriptions.
     Priority: BREEZE_SYMBOL_OVERRIDES (hardcoded) → mapping_cache → Supabase lookup → original.
     """
-    # Hardcoded overrides take priority (e.g. NIFTY→'NIFTY 50', MEDICO→MEDREM).
+    # Hardcoded overrides take priority (e.g. MEDICO→MEDREM, WAAREERTL→SANADV).
     if standard_symbol in BREEZE_SYMBOL_OVERRIDES:
         return BREEZE_SYMBOL_OVERRIDES[standard_symbol]
 
@@ -1184,7 +1232,13 @@ def reg30_narrative():
 # ─────────────────────────────────────────────
 @socketio.on('connect')
 def handle_connect():
+    global _tick_dispatcher_started
     logger.info(f"Client connected: {request.sid}")
+    # Start the tick dispatcher greenlet on the very first client connection.
+    # socketio.start_background_task spawns an eventlet greenlet where socketio.emit() works correctly.
+    if not _tick_dispatcher_started:
+        _tick_dispatcher_started = True
+        socketio.start_background_task(_run_tick_dispatcher)
 
 
 @socketio.on('disconnect')
