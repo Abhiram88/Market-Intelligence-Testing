@@ -8,13 +8,14 @@ interface NiftyRealtimeCardProps {
 }
 
 const formatVolume = (vol: number) => {
-  if (!vol) return '--';
+  if (!vol) return 'N/A';
   return `${(vol / 1000000).toFixed(2)}M`;
 };
 
 export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry }) => {
 
   const isPositive = telemetry ? telemetry.change >= 0 : false;
+  const sign = isPositive ? '+' : '';
 
   const trendGlowClass = (() => {
     if (!telemetry || !getMarketSessionStatus().isOpen) return '';
@@ -67,20 +68,13 @@ export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry 
               <span className="text-6xl font-light tracking-tighter text-white">
                 {telemetry.last_traded_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </span>
-              <div className="flex items-center mt-3 space-x-4">
-                <span className={`text-2xl font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-                  {isPositive ? '+' : ''}{telemetry.change.toFixed(2)}
-                </span>
-                <span className={`text-base font-medium px-2.5 py-0.5 rounded-lg ${isPositive ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
-                  {telemetry.percent_change.toFixed(2)}%
+              <div className="flex items-center mt-3">
+                <span className={`text-lg font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                  {`${sign}${telemetry.change.toFixed(2)} (${sign}${telemetry.percent_change.toFixed(2)}%)`}
                 </span>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-800/50">
-              <div className="bg-slate-900/50 p-3 rounded-2xl border border-slate-800">
-                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Session H/L</p>
-                <p className="font-mono text-sm text-slate-300">{telemetry.high.toLocaleString()} / {telemetry.low.toLocaleString()}</p>
-              </div>
+            <div className="pt-6 border-t border-slate-800/50">
               <div className="bg-slate-900/50 p-3 rounded-2xl border border-slate-800">
                 <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Vol (M)</p>
                 <p className="font-mono text-sm text-slate-300">{formatVolume(telemetry.volume)}</p>

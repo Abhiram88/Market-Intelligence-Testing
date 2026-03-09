@@ -102,6 +102,14 @@ _subscribed_breeze_codes: set[str] = set()  # breeze stock_codes with active sub
 _tick_dispatch_queue: "_stdlib_queue.SimpleQueue[dict]" = _stdlib_queue.SimpleQueue()
 _tick_dispatcher_started: bool = False
 
+# Per-symbol cache of the correct previous-day closing price, populated by the REST
+# get_quotes() initial snapshot.  Breeze exchange-quote WebSocket ticks for indices (e.g.
+# NIFTY) use `close` = the index value from the previous *second*, not yesterday's session
+# close.  This causes `change` / `chng_per` in every WebSocket tick to be tiny (~-0.01%)
+# rather than the real daily move.  By caching the correct previous_close from the REST
+# snapshot we can recompute the proper daily change/% for every subsequent WebSocket tick.
+_symbol_prev_close: dict[str, float] = {}
+
 
 # ─────────────────────────────────────────────
 # HOME
@@ -281,16 +289,51 @@ def wrap_success_payload(payload):
 
 def normalize_tick_for_frontend(ticks, resolved_symbol):
     """
-    Breeze websocket quote ticks use keys like `last`, `bPrice`, `sPrice`, `ttq`.
-    Frontend expects fields like `ltp`, `last_traded_price`, `percent_change`, etc.
+    Normalize a Breeze tick (REST quote or WebSocket exchange-quote) for the frontend.
+
+    KEY ISSUE WITH BREEZE WEBSOCKET TICKS FOR INDICES (e.g. NIFTY):
+    Exchange-quote WebSocket ticks (get_exchange_quotes=True) carry a `close` field that
+    holds the index value from the *previous second* — NOT yesterday's session closing
+    price.  This means `change` and `chng_per` in those ticks are tiny intra-second
+    deltas (typically ≈ -0.01%) rather than the real daily move.
+
+    FIX: The REST get_quotes() initial snapshot DOES return the correct previous-day
+    close via `ltp_percent_change` and `close`.  We detect REST vs WebSocket ticks by
+    checking for `ltp_percent_change` (present only in REST responses), cache the correct
+    `previous_close` per symbol, and use it to recompute `change` and `%` for all
+    subsequent WebSocket ticks.
     """
     last = to_float(ticks.get("last", ticks.get("ltp", ticks.get("last_traded_price", 0))))
-    previous_close = to_float(ticks.get("close", ticks.get("previous_close", 0)))
-    change = to_float(ticks.get("change", (last - previous_close)))
-    pct = ticks.get("ltp_percent_change", ticks.get("percent_change", ticks.get("chng_per")))
-    if pct is None or pct == "":
-        pct = ((change / previous_close) * 100.0) if previous_close else 0.0
-    pct = to_float(pct)
+
+    # REST get_quotes() always includes `ltp_percent_change`; WebSocket ticks never do.
+    is_rest_quote = ticks.get("ltp_percent_change") is not None
+
+    if is_rest_quote:
+        # REST snapshot: change/% fields are correct (computed against yesterday's close).
+        previous_close = to_float(ticks.get("close", ticks.get("previous_close", 0)))
+        change = to_float(ticks.get("change", (last - previous_close) if previous_close else 0))
+        pct = to_float(ticks.get("ltp_percent_change", ticks.get("percent_change", 0)))
+        # Cache the correct previous-day close so WebSocket ticks can use it later.
+        if previous_close > 0 and resolved_symbol:
+            _symbol_prev_close[resolved_symbol] = previous_close
+    else:
+        # WebSocket tick: `close` is the intra-tick (prev-second) reference, not yesterday's
+        # session close.  Use the cached correct previous_close to get real daily change/%.
+        cached_close = _symbol_prev_close.get(resolved_symbol, 0) if resolved_symbol else 0
+        if cached_close > 0:
+            previous_close = cached_close
+            change = last - previous_close
+            pct = (change / previous_close * 100.0) if previous_close else 0.0
+        else:
+            # Cache not yet populated (first tick arrived before the REST snapshot ran).
+            # Fall back to the tick's own values — will be corrected on the next tick after
+            # the REST snapshot completes and populates the cache.
+            previous_close = to_float(ticks.get("close", ticks.get("previous_close", 0)))
+            change = to_float(ticks.get("change", (last - previous_close) if previous_close else 0))
+            raw_pct = ticks.get("chng_per")
+            pct = (to_float(raw_pct) if (raw_pct is not None and raw_pct != "")
+                   else ((change / previous_close * 100.0) if previous_close else 0.0))
+
     vol = to_float(ticks.get("ttq", ticks.get("total_quantity_traded", ticks.get("total_volume", ticks.get("volume", 0)))))
 
     normalized = dict(ticks)
