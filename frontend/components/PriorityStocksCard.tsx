@@ -115,12 +115,17 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
     const symbolsToSubscribe = ['NIFTY', ...priorityStocks.map(s => s.symbol)];
 
     const connect = () => {
+      // Google Cloud Run requires HTTP long-polling to establish the session first.
+      // Starting with 'websocket' causes "WebSocket is closed before the connection is
+      // established" because Cloud Run terminates WebSocket upgrades before they complete.
+      // Starting with 'polling' lets Socket.IO handshake succeed, then upgrade to WebSocket.
       const socket = io(getProxyBaseUrl(), {
-        transports: ['websocket', 'polling'],
+        transports: ['polling', 'websocket'],
         reconnection: true,
         reconnectionAttempts: Infinity,
-        reconnectionDelay: 1000,
-        timeout: 10000,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 10000,
+        timeout: 20000,
       });
       socketRef.current = socket;
 

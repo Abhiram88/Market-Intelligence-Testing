@@ -31,7 +31,21 @@ if os.path.isfile(_CONFIG_PATH):
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "X-Proxy-Key", "X-Proxy-Admin-Key"]}})
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Google Cloud Run notes:
+# - async_mode='eventlet' is required for non-blocking WebSocket/long-poll support.
+# - ping_timeout/ping_interval: keep connections alive through Cloud Run's 60s idle timeout.
+# - allow_upgrades=True: allow HTTP long-poll sessions to upgrade to WebSocket after handshake.
+#   Clients on Cloud Run must start with polling first; this allows the subsequent upgrade.
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode='eventlet',
+    ping_timeout=60,
+    ping_interval=25,
+    allow_upgrades=True,
+    logger=False,
+    engineio_logger=False,
+)
 
 
 @app.after_request
