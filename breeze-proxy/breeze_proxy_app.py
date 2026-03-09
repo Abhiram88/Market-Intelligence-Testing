@@ -75,10 +75,13 @@ mapping_cache = {}
 # Hard-coded NSE-symbol → Breeze-short-code overrides.
 # These are definitive: same set as breezeService.ts HARDCODED_MAPPINGS on the frontend.
 # Applied before Supabase lookup so the correct Breeze code is always used.
-# NOTE: NIFTY uses stock_code="NIFTY" directly — confirmed working in local test.
-#       Do NOT map it to "NIFTY 50": the Breeze WebSocket accepts "NIFTY" for NSE NIFTY 50
-#       and ticks come back with stock_code="NIFTY", which the registry resolves correctly.
+# NOTE: NIFTY must stay here so get_breeze_symbol() never queries Supabase for it.
+#       Supabase nse_master_list has multiple rows matching NIFTY, so maybe_single()
+#       returns HTTP 406 (multiple rows), causing a 'NoneType' attribute error.
+#       Breeze WebSocket accepts stock_code="NIFTY" directly for NSE NIFTY 50;
+#       ticks come back with stock_code="NIFTY" — confirmed by local test.
 BREEZE_SYMBOL_OVERRIDES: dict[str, str] = {
+    'NIFTY':      'NIFTY',    # Keep here: Supabase returns 406 for this symbol
     'AHLUCONT':   'AHLCON',
     'AXISCADES':  'AXIIT',
     'MEDICO':     'MEDREM',
@@ -1329,6 +1332,33 @@ def track_watchlist(stock_list, proxy_key, sid):
             logger.info(f"Subscribed to feed: {symbol} → Breeze code '{breeze_code}'")
         except Exception as e:
             logger.error(f"Failed to subscribe to {symbol} ({breeze_code}): {e}")
+
+    # Emit an initial quote snapshot for every subscribed symbol via REST.
+    # Breeze WebSocket only pushes ticks on NEW trade activity — illiquid small-caps
+    # can go minutes without a tick, leaving the UI stuck on "Awaiting...".
+    # Fetching the REST quote immediately after subscribing bootstraps the UI with
+    # the last traded price, change, and bid/ask even before any WebSocket tick arrives.
+    socketio.sleep(0.3)  # allow WebSocket subscribe ACKs to arrive before REST calls
+    for symbol in stock_list:
+        std = canonical_symbol(symbol)
+        breeze_code = get_breeze_symbol(std)
+        try:
+            res = client.get_quotes(
+                stock_code=breeze_code,
+                exchange_code="NSE",
+                product_type="cash"
+            )
+            raw = normalize_breeze_response(res)
+            # get_quotes returns {"Success": [<single dict>]}.
+            # normalize_breeze_response unwraps to the list; take the first (only) element.
+            if isinstance(raw, list):
+                raw = raw[0] if raw else None
+            if raw and isinstance(raw, dict):
+                payload = normalize_tick_for_frontend(dict(raw), std)
+                socketio.emit('watchlist_update', payload, to=sid, namespace='/')
+                logger.info(f"Initial quote emitted: {symbol} ltp={payload.get('ltp')}")
+        except Exception as e:
+            logger.warning(f"Initial quote fetch failed for {symbol}: {e}")
 
     # Keep background task alive while this SID is connected.
     # Ticks arrive via _global_on_ticks — no polling needed.
