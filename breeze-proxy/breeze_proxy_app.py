@@ -96,11 +96,21 @@ _tick_registry: dict[str, set] = {}   # symbol -> set(sid)
 _registry_symbol_map: dict[str, str] = {}   # canonical raw_symbol from Breeze -> frontend symbol
 _subscribed_breeze_codes: set[str] = set()  # breeze stock_codes with active subscriptions
 
+# Breeze WebSocket connection state.  The WebSocket is a SHARED resource: all Socket.IO
+# clients share one Breeze WebSocket feed.  We must connect it exactly once and only
+# disconnect when no subscribers remain.  Calling ws_connect() on every client subscription
+# disrupts the existing connection and kills tick delivery for all subscribers.
+_ws_connected: bool = False
+
 # Thread-safe queue: Breeze's WebSocket reader thread puts raw ticks here;
 # the _run_tick_dispatcher greenlet drains the queue and calls socketio.emit.
 # This bridges Breeze's native/green thread context to the Flask-SocketIO event loop.
 _tick_dispatch_queue: "_stdlib_queue.SimpleQueue[dict]" = _stdlib_queue.SimpleQueue()
 _tick_dispatcher_started: bool = False
+
+# Track which symbols have had their first tick logged (at INFO level).
+# Subsequent ticks are logged at DEBUG to avoid flooding the log.
+_first_tick_logged: set = set()
 
 # Per-symbol cache of the correct previous-day closing price, populated by the REST
 # get_quotes() initial snapshot.  Breeze exchange-quote WebSocket ticks for indices (e.g.
@@ -418,7 +428,13 @@ def _global_on_ticks(ticks):
     from within the Flask-SocketIO event loop where socketio.emit() works correctly.
     """
     if ticks:
-        logger.debug(f"[on_ticks] Tick received: stock_code={ticks.get('stock_code')!r} last={ticks.get('last')!r}")
+        stock_code = ticks.get('stock_code', 'Unknown')
+        # Log first tick per symbol at INFO for visibility; subsequent at DEBUG.
+        if stock_code not in _first_tick_logged:
+            _first_tick_logged.add(stock_code)
+            logger.info(f"[on_ticks] ✓ First tick for '{stock_code}': last={ticks.get('last')!r} bPrice={ticks.get('bPrice')!r}")
+        else:
+            logger.debug(f"[on_ticks] Tick: stock_code={stock_code!r} last={ticks.get('last')!r}")
         _tick_dispatch_queue.put(dict(ticks))
 
 
@@ -439,7 +455,12 @@ def _dispatch_tick(ticks: dict) -> None:
     payload = normalize_tick_for_frontend(ticks, resolved)
 
     targets = list(_tick_registry.get(resolved, set()))
-    logger.debug(f"[dispatch] symbol={resolved!r} ltp={payload.get('ltp')} targets={targets}")
+    if not targets:
+        # Log at DEBUG — no subscribers for this symbol (common during cleanup transitions)
+        logger.debug(f"[dispatch] No targets for symbol={resolved!r} (raw={raw!r})")
+        return
+
+    logger.debug(f"[dispatch] symbol={resolved!r} ltp={payload.get('ltp')} -> {len(targets)} SIDs")
 
     for sid in targets:
         try:
@@ -476,6 +497,66 @@ def _unregister_sid(sid: str) -> None:
     """Remove a disconnected SID from all registry entries."""
     for sym_sids in _tick_registry.values():
         sym_sids.discard(sid)
+
+
+def _ensure_ws_connected(client):
+    """
+    Connect the Breeze WebSocket if not already connected.
+
+    The WebSocket is a SHARED resource across all Socket.IO clients.
+    We must connect it exactly once and keep it alive until all subscribers disconnect.
+    Calling ws_connect() on every client subscription is the bug that was causing ticks
+    to stop flowing — it disrupts the existing connection.
+
+    Returns True if the WebSocket is (now) connected, False on failure.
+    """
+    global _ws_connected
+
+    if _ws_connected:
+        return True
+
+    # Assign the global tick callback before connecting.
+    client.on_ticks = _global_on_ticks
+
+    # Fresh connection — no prior subscriptions exist.
+    _subscribed_breeze_codes.clear()
+    _first_tick_logged.clear()
+
+    try:
+        client.ws_connect()
+        _ws_connected = True
+        logger.info("Breeze WebSocket connected successfully")
+        return True
+    except Exception as e:
+        err_msg = str(e).lower()
+        # BreezeConnect raises if ws_connect() is called on an already-connected client.
+        # Treat this as a successful "already connected" state.
+        if "already" in err_msg or "connected" in err_msg:
+            _ws_connected = True
+            logger.info(f"Breeze WebSocket was already connected: {e}")
+            # Don't clear _subscribed_breeze_codes — existing subscriptions may still be active.
+            return True
+        logger.error(f"Breeze WebSocket connection failed: {e}")
+        return False
+
+
+def _ws_disconnect_if_idle(client):
+    """
+    Disconnect the Breeze WebSocket only when no subscribers remain at all.
+    Sets _ws_connected = False so the next client subscription will reconnect.
+    """
+    global _ws_connected
+
+    if not any(sids for sids in _tick_registry.values() if sids):
+        try:
+            client.ws_disconnect()
+            _ws_connected = False
+            _subscribed_breeze_codes.clear()
+            _first_tick_logged.clear()
+            logger.info("Breeze WebSocket disconnected — no more subscribers")
+        except Exception as e:
+            logger.error(f"Error disconnecting WebSocket: {e}")
+            _ws_connected = False
 
 
 def get_gemini_model_candidates():
@@ -1351,24 +1432,26 @@ def handle_watchlist_subscription(data):
 
 def track_watchlist(stock_list, proxy_key, sid):
     """
-    Uses Breeze WebSocket feeds for real-time watchlist updates.
+    Subscribe a Socket.IO client to real-time Breeze WebSocket feeds.
 
-    Uses a module-level _tick_registry so that multiple Socket.IO clients (e.g., the
-    Nifty card socket and the Watchlist socket in the browser) each receive the ticks
-    they subscribed to, without one overwriting the other's on_ticks callback.
+    Architecture:
+    - The Breeze WebSocket is a SHARED singleton — all clients share one connection.
+    - _ensure_ws_connected() connects it on the first subscription and keeps it alive.
+    - Each client (SID) is registered in _tick_registry so ticks are dispatched to it.
+    - Feeds are subscribed INCREMENTALLY (only new symbols, not already-subscribed ones).
+    - When a SID disconnects, its registry entry is removed. Feeds with no remaining
+      subscribers are unsubscribed. The WebSocket is disconnected only when ALL clients leave.
 
-    When the SID disconnects, its registry entries are cleaned up and any Breeze feeds
-    that have no remaining subscribers are unsubscribed.
+    This avoids the previous bug where ws_connect() was called on every subscription,
+    disrupting the shared connection and killing tick delivery for all subscribers.
     """
-    global _subscribed_breeze_codes
-
     client, err_resp, _ = ensure_breeze_session()
     if err_resp:
         logger.error(f"Could not get Breeze session for watchlist (sid={sid}).")
         socketio.emit('watchlist_error', {"error": "Breeze session not available"}, room=sid)
         return
 
-    # Build the global symbol map used by _global_on_ticks to resolve tick symbols.
+    # Build the global symbol map used by _dispatch_tick to resolve tick symbols.
     # Key insight: Breeze WebSocket ticks carry the Breeze short code (e.g. "NIFTY 50", "MEDREM"),
     # so we must map BOTH the canonical frontend symbol AND the raw Breeze code to the frontend symbol.
     for symbol in stock_list:
@@ -1380,30 +1463,26 @@ def track_watchlist(stock_list, proxy_key, sid):
         # Also map the raw Breeze code directly (e.g. "NIFTY 50" with space)
         _registry_symbol_map[breeze_code.strip().upper()] = std
 
-    # Register this SID for each symbol so _global_on_ticks dispatches to it.
+    # Register this SID for each symbol so _dispatch_tick routes ticks to it.
     for symbol in stock_list:
         _register_tick_sid(canonical_symbol(symbol), sid)
 
-    # Assign the global dispatcher once (idempotent — any subsequent assignment is the same function).
+    # Ensure the shared Breeze WebSocket is connected (idempotent — only connects once).
+    # Also assigns client.on_ticks = _global_on_ticks on the first call.
+    if not _ensure_ws_connected(client):
+        socketio.emit('watchlist_error', {"error": "WebSocket connection failed"}, room=sid)
+        return
+
+    # Idempotent: keep on_ticks pointing at our global dispatcher even for subsequent clients.
     client.on_ticks = _global_on_ticks
 
-    # Connect Breeze WebSocket.
-    # Clear _subscribed_breeze_codes first: a reconnecting WebSocket has no existing
-    # subscriptions, so we must not skip re-subscribing based on stale data.
-    _subscribed_breeze_codes.clear()
-    try:
-        client.ws_connect()
-        logger.info(f"Breeze WebSocket connected for {sid}")
-    except Exception as e:
-        # ws_connect raises if already connected; safe to continue — feeds will be added below.
-        logger.warning(f"ws_connect for {sid}: {e}")
-
-    # Subscribe to Breeze feeds.
+    # Subscribe only NEW feeds — feeds already in _subscribed_breeze_codes are skipped.
+    # get_exchange_quotes=True gives tick-by-tick LTP + L1 bid/ask updates.
+    # get_market_depth=False — exchange quotes already include L1 bid/ask; depth adds
+    #   full 5-level order book which is not needed for the watchlist card.
     newly_subscribed = []
     for symbol in stock_list:
         std = canonical_symbol(symbol)
-        # get_breeze_symbol returns the correct Breeze code (e.g. "NIFTY 50", "MEDREM").
-        # Do NOT call canonical_symbol on the result — it would turn "NIFTY 50" back to "NIFTY".
         breeze_code = get_breeze_symbol(std)
         if breeze_code in _subscribed_breeze_codes:
             logger.info(f"Feed already active: {symbol} ({breeze_code}) — skipping")
@@ -1414,7 +1493,7 @@ def track_watchlist(stock_list, proxy_key, sid):
                 stock_code=breeze_code,
                 product_type="cash",
                 get_exchange_quotes=True,
-                get_market_depth=True
+                get_market_depth=False
             )
             _subscribed_breeze_codes.add(breeze_code)
             newly_subscribed.append((breeze_code, symbol))
@@ -1450,7 +1529,7 @@ def track_watchlist(stock_list, proxy_key, sid):
             logger.warning(f"Initial quote fetch failed for {symbol}: {e}")
 
     # Keep background task alive while this SID is connected.
-    # Ticks arrive via _global_on_ticks — no polling needed.
+    # Ticks arrive via _global_on_ticks → _tick_dispatch_queue → _dispatch_tick — no polling needed.
     while True:
         try:
             if not socketio.server.manager.is_connected(sid, '/'):
@@ -1465,7 +1544,6 @@ def track_watchlist(stock_list, proxy_key, sid):
 
     # Unsubscribe feeds that now have no registered subscribers.
     for breeze_code, symbol in newly_subscribed:
-        # Check if any other SID still needs this symbol.
         std = canonical_symbol(symbol)
         remaining = _tick_registry.get(std, set())
         if not remaining:
@@ -1475,7 +1553,7 @@ def track_watchlist(stock_list, proxy_key, sid):
                     stock_code=breeze_code,
                     product_type="cash",
                     get_exchange_quotes=True,
-                    get_market_depth=True
+                    get_market_depth=False
                 )
                 _subscribed_breeze_codes.discard(breeze_code)
                 logger.info(f"Unsubscribed feed (no more subscribers): {symbol} ({breeze_code})")
@@ -1483,12 +1561,7 @@ def track_watchlist(stock_list, proxy_key, sid):
                 logger.error(f"Error unsubscribing {symbol}: {e}")
 
     # Disconnect Breeze WebSocket only when there are no more active subscribers at all.
-    if not any(s for sids in _tick_registry.values() for s in sids):
-        try:
-            client.ws_disconnect()
-            logger.info("Breeze WebSocket disconnected — no more subscribers")
-        except Exception as e:
-            logger.error(f"Error disconnecting WebSocket: {e}")
+    _ws_disconnect_if_idle(client)
 
 
 # ─────────────────────────────────────────────
