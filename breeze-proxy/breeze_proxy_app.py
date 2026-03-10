@@ -287,9 +287,38 @@ def wrap_success_payload(payload):
     return {"Success": [payload]} if payload is not None else {"Success": []}
 
 
+def _extract_depth_l1(ticks):
+    """
+    Extract Level-1 best bid/ask from Breeze market-depth ticks.
+
+    Market depth ticks carry order-book data in comma-separated strings:
+      best_5_buy_price  = "40.85,40.80,40.75,40.70,40.65"
+      best_5_buy_quantity = "1100,500,300,200,100"
+      best_5_sell_price = "40.95,41.00,41.05,41.10,41.15"
+      best_5_sell_quantity = "14,100,200,300,400"
+
+    Returns (bid_price, bid_qty, ask_price, ask_qty) — all floats.
+    Returns (0,0,0,0) if the tick is not a depth tick or fields are absent.
+    """
+    buy_prices = ticks.get("best_5_buy_price") or ticks.get("Best5BuyPrice") or ""
+    buy_qtys = ticks.get("best_5_buy_quantity") or ticks.get("Best5BuyQty") or ""
+    sell_prices = ticks.get("best_5_sell_price") or ticks.get("Best5SellPrice") or ""
+    sell_qtys = ticks.get("best_5_sell_quantity") or ticks.get("Best5SellQty") or ""
+
+    def first_float(csv_str):
+        try:
+            parts = str(csv_str).split(",")
+            return float(parts[0]) if parts and parts[0].strip() else 0.0
+        except (ValueError, IndexError):
+            return 0.0
+
+    return first_float(buy_prices), first_float(buy_qtys), first_float(sell_prices), first_float(sell_qtys)
+
+
 def normalize_tick_for_frontend(ticks, resolved_symbol):
     """
-    Normalize a Breeze tick (REST quote or WebSocket exchange-quote) for the frontend.
+    Normalize a Breeze tick (REST quote, WebSocket exchange-quote, or market-depth)
+    for the frontend.
 
     KEY ISSUE WITH BREEZE WEBSOCKET TICKS FOR INDICES (e.g. NIFTY):
     Exchange-quote WebSocket ticks (get_exchange_quotes=True) carry a `close` field that
@@ -302,6 +331,11 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
     checking for `ltp_percent_change` (present only in REST responses), cache the correct
     `previous_close` per symbol, and use it to recompute `change` and `%` for all
     subsequent WebSocket ticks.
+
+    MARKET DEPTH TICKS: When get_market_depth=True, Breeze sends separate depth ticks
+    with best_5_buy_price / best_5_sell_price (comma-separated).  We extract L1 bid/ask
+    from these so the frontend receives real-time order-book updates even when no trade
+    occurs — critical for illiquid stocks.
     """
     last = to_float(ticks.get("last", ticks.get("ltp", ticks.get("last_traded_price", 0))))
 
@@ -336,6 +370,18 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
 
     vol = to_float(ticks.get("ttq", ticks.get("total_quantity_traded", ticks.get("total_volume", ticks.get("volume", 0)))))
 
+    # Extract bid/ask from exchange-quote fields (bPrice/sPrice) first.
+    bid_price = to_float(ticks.get("bPrice", ticks.get("best_bid_price", 0)))
+    bid_qty = to_float(ticks.get("bQty", ticks.get("best_bid_quantity", 0)))
+    ask_price = to_float(ticks.get("sPrice", ticks.get("best_offer_price", 0)))
+    ask_qty = to_float(ticks.get("sQty", ticks.get("best_offer_quantity", 0)))
+
+    # If exchange-quote L1 is absent, try extracting from market-depth fields.
+    if bid_price == 0 and ask_price == 0:
+        d_bid, d_bid_qty, d_ask, d_ask_qty = _extract_depth_l1(ticks)
+        if d_bid > 0 or d_ask > 0:
+            bid_price, bid_qty, ask_price, ask_qty = d_bid, d_bid_qty, d_ask, d_ask_qty
+
     normalized = dict(ticks)
     normalized.update({
         "symbol": resolved_symbol,
@@ -346,10 +392,10 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
         "change": change,
         "ltp_percent_change": pct,
         "percent_change": pct,
-        "best_bid_price": to_float(ticks.get("bPrice", ticks.get("best_bid_price", 0))),
-        "best_bid_quantity": to_float(ticks.get("bQty", ticks.get("best_bid_quantity", 0))),
-        "best_offer_price": to_float(ticks.get("sPrice", ticks.get("best_offer_price", 0))),
-        "best_offer_quantity": to_float(ticks.get("sQty", ticks.get("best_offer_quantity", 0))),
+        "best_bid_price": bid_price,
+        "best_bid_quantity": bid_qty,
+        "best_offer_price": ask_price,
+        "best_offer_quantity": ask_qty,
         "volume": vol,
         "total_quantity_traded": vol,
         "open": to_float(ticks.get("open", 0)),
@@ -1368,7 +1414,7 @@ def track_watchlist(stock_list, proxy_key, sid):
                 stock_code=breeze_code,
                 product_type="cash",
                 get_exchange_quotes=True,
-                get_market_depth=False
+                get_market_depth=True
             )
             _subscribed_breeze_codes.add(breeze_code)
             newly_subscribed.append((breeze_code, symbol))
@@ -1429,7 +1475,7 @@ def track_watchlist(stock_list, proxy_key, sid):
                     stock_code=breeze_code,
                     product_type="cash",
                     get_exchange_quotes=True,
-                    get_market_depth=False
+                    get_market_depth=True
                 )
                 _subscribed_breeze_codes.discard(breeze_code)
                 logger.info(f"Unsubscribed feed (no more subscribers): {symbol} ({breeze_code})")

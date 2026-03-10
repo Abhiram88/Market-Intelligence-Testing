@@ -160,6 +160,24 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
               previous_close: normalized.previous_close !== 0
                 ? normalized.previous_close
                 : (existing?.previous_close ?? 0),
+      // Preserve bid/ask/volume: depth ticks may not carry trade data, exchange-quote ticks
+      // may not carry depth data. Keep previous good values when the new tick delivers 0.
+              best_bid_price: normalized.best_bid_price
+                ? normalized.best_bid_price : (existing?.best_bid_price ?? 0),
+              best_bid_quantity: normalized.best_bid_quantity
+                ? normalized.best_bid_quantity : (existing?.best_bid_quantity ?? 0),
+              best_offer_price: normalized.best_offer_price
+                ? normalized.best_offer_price : (existing?.best_offer_price ?? 0),
+              best_offer_quantity: normalized.best_offer_quantity
+                ? normalized.best_offer_quantity : (existing?.best_offer_quantity ?? 0),
+              volume: normalized.volume !== 0
+                ? normalized.volume : (existing?.volume ?? 0),
+              total_quantity_traded: normalized.volume !== 0
+                ? normalized.volume : (existing?.total_quantity_traded ?? existing?.volume ?? 0),
+              last_traded_price: normalized.last_traded_price !== 0
+                ? normalized.last_traded_price : (existing?.last_traded_price ?? 0),
+              ltp: normalized.last_traded_price !== 0
+                ? normalized.last_traded_price : (existing?.ltp ?? existing?.last_traded_price ?? 0),
             },
           };
         });
