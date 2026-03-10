@@ -110,7 +110,7 @@ _tick_dispatcher_started: bool = False
 
 # Track which symbols have had their first tick logged (at INFO level).
 # Subsequent ticks are logged at DEBUG to avoid flooding the log.
-_first_tick_logged: set = set()
+_first_tick_logged: set[str] = set()
 
 # Per-symbol cache of the correct previous-day closing price, populated by the REST
 # get_quotes() initial snapshot.  Breeze exchange-quote WebSocket ticks for indices (e.g.
@@ -518,23 +518,24 @@ def _ensure_ws_connected(client):
     # Assign the global tick callback before connecting.
     client.on_ticks = _global_on_ticks
 
-    # Fresh connection — no prior subscriptions exist.
-    _subscribed_breeze_codes.clear()
-    _first_tick_logged.clear()
-
     try:
         client.ws_connect()
         _ws_connected = True
+        # Fresh connection established — clear stale subscription tracking.
+        # Only clear AFTER successful connect (not before), so an "already connected"
+        # exception path doesn't wipe tracking for subscriptions that are still active.
+        _subscribed_breeze_codes.clear()
+        _first_tick_logged.clear()
         logger.info("Breeze WebSocket connected successfully")
         return True
     except Exception as e:
-        err_msg = str(e).lower()
         # BreezeConnect raises if ws_connect() is called on an already-connected client.
-        # Treat this as a successful "already connected" state.
+        # The library doesn't expose a typed exception for this, so we match the message.
+        err_msg = str(e).lower()
         if "already" in err_msg or "connected" in err_msg:
             _ws_connected = True
             logger.info(f"Breeze WebSocket was already connected: {e}")
-            # Don't clear _subscribed_breeze_codes — existing subscriptions may still be active.
+            # Existing subscriptions are still active — don't clear tracking.
             return True
         logger.error(f"Breeze WebSocket connection failed: {e}")
         return False
