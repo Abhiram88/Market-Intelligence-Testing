@@ -96,6 +96,12 @@ _tick_registry: dict[str, set] = {}   # symbol -> set(sid)
 _registry_symbol_map: dict[str, str] = {}   # canonical raw_symbol from Breeze -> frontend symbol
 _subscribed_breeze_codes: set[str] = set()  # breeze stock_codes with active subscriptions
 
+# Reliable set of currently-connected Socket.IO SIDs.
+# Updated by handle_connect / handle_disconnect so background tasks can check
+# "is this SID still alive?" without calling socketio.server.manager.is_connected(),
+# which can raise exceptions under eventlet and silently kill poll tasks.
+_active_sids: set[str] = set()
+
 # Breeze WebSocket connection state.  The WebSocket is a SHARED resource: all Socket.IO
 # clients share one Breeze WebSocket feed.  We must connect it exactly once and only
 # disconnect when no subscribers remain.  Calling ws_connect() on every client subscription
@@ -1407,7 +1413,9 @@ def reg30_narrative():
 @socketio.on('connect')
 def handle_connect():
     global _tick_dispatcher_started
-    logger.info(f"Client connected: {request.sid}")
+    sid = request.sid
+    _active_sids.add(sid)
+    logger.info(f"Client connected: {sid}")
     # Start the tick dispatcher greenlet on the very first client connection.
     # socketio.start_background_task spawns an eventlet greenlet where socketio.emit() works correctly.
     if not _tick_dispatcher_started:
@@ -1418,6 +1426,7 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
+    _active_sids.discard(sid)
     logger.info(f"Client disconnected: {sid}")
     _unregister_sid(sid)
 
@@ -1439,23 +1448,23 @@ def _poll_stock_quotes(client, sid, poll_stocks):
     Runs in its OWN greenlet so REST calls cannot block/starve the WebSocket
     tick dispatcher or Socket.IO heartbeats.  Stops when the SID disconnects.
 
-    Args:
-        client: BreezeConnect client with an active session.
-        sid: Socket.IO session ID to emit updates to.
-        poll_stocks: list of (canonical_symbol, breeze_code) tuples.
+    Disconnect detection uses _active_sids (maintained by handle_connect /
+    handle_disconnect) instead of socketio.server.manager.is_connected(), which
+    can raise exceptions under eventlet and silently kill the poll task.
     """
-    poll_interval = 5  # seconds between REST refreshes
+    poll_interval = 3  # seconds between REST refreshes
     logger.info(f"[poll] Starting REST quote poll for {len(poll_stocks)} stocks "
                 f"every {poll_interval}s (sid={sid}): {[s for s, _ in poll_stocks]}")
     while True:
-        try:
-            if not socketio.server.manager.is_connected(sid, '/'):
-                logger.info(f"[poll] Client {sid} disconnected — stopping poll.")
-                break
-        except Exception:
+        # Stop if the SID has disconnected.
+        if sid not in _active_sids:
+            logger.info(f"[poll] Client {sid} no longer active — stopping poll.")
             break
 
         for std, breeze_code in poll_stocks:
+            # Also abort early if SID disconnects mid-iteration.
+            if sid not in _active_sids:
+                break
             try:
                 res = client.get_quotes(
                     stock_code=breeze_code,
@@ -1470,7 +1479,7 @@ def _poll_stock_quotes(client, sid, poll_stocks):
                     socketio.emit('watchlist_update', payload, to=sid, namespace='/')
                     logger.debug(f"[poll] {std} ltp={payload.get('ltp')}")
             except Exception as e:
-                logger.debug(f"[poll] REST quote failed for {std}: {e}")
+                logger.warning(f"[poll] REST quote failed for {std} ({breeze_code}): {e}")
 
         socketio.sleep(poll_interval)
 
@@ -1583,14 +1592,12 @@ def track_watchlist(stock_list, proxy_key, sid):
 
     # Keep background task alive while this SID is connected.
     # Ticks arrive via _global_on_ticks → _tick_dispatch_queue → _dispatch_tick — no polling needed.
-    while True:
-        try:
-            if not socketio.server.manager.is_connected(sid, '/'):
-                logger.info(f"Client {sid} disconnected — cleaning up feeds.")
-                break
-        except Exception:
-            break
+    # Use _active_sids for disconnect detection.
+    # socketio.server.manager.is_connected() can raise under eventlet and silently
+    # kill this greenlet before the feed-cleanup code below can run.
+    while sid in _active_sids:
         socketio.sleep(5)
+    logger.info(f"Client {sid} no longer active — cleaning up feeds.")
 
     # SID disconnected: remove from registry (also done in handle_disconnect, but belt-and-suspenders).
     _unregister_sid(sid)

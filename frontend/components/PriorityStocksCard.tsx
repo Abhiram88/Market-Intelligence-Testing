@@ -36,12 +36,19 @@ interface PriorityStocksCardProps {
 }
 
 export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyTick }) => {
+  const STALE_THRESHOLD_MS = 60_000;
+  const FEED_HEALTHY_THRESHOLD_MS = 15_000;
+
   const [priorityStocks, setPriorityStocks] = useState<PriorityStock[]>([]);
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [historicalCache, setHistoricalCache] = useState<Record<string, number>>({});
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const [showRawFeed, setShowRawFeed] = useState(false);
+  const [tickCount, setTickCount] = useState(0);
+  const [lastTickMs, setLastTickMs] = useState<number | null>(null);
+  const lastTickMsRef = useRef<number | null>(null);
+  const stalenessTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Keep a stable ref to onNiftyTick so the socket closure doesn't go stale.
   const onNiftyTickRef = useRef(onNiftyTick);
@@ -148,6 +155,10 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
         }
 
         const normalized = normalizeBreezeQuoteFromRow(data, symbol);
+        const now = Date.now();
+        setTickCount(n => n + 1);
+        setLastTickMs(now);
+        lastTickMsRef.current = now;
         setQuotes(prev => {
           const existing = prev[symbol];
           return {
@@ -212,8 +223,22 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
 
     connect();
 
+    stalenessTimerRef.current = setInterval(() => {
+      const socket = socketRef.current;
+      if (!socket?.connected) return;
+      if (!getMarketSessionStatus().isOpen) return;
+      const last = lastTickMsRef.current;
+      if (last !== null && Date.now() - last < STALE_THRESHOLD_MS) return;
+      console.warn('[PriorityStocksCard] Stale feed detected — re-subscribing…');
+      socket.emit('subscribe_to_watchlist', {
+        stocks: symbolsToSubscribe,
+        proxy_key: localStorage.getItem('breeze_proxy_key') || '',
+      });
+    }, 30_000);
+
     return () => {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (stalenessTimerRef.current) clearInterval(stalenessTimerRef.current);
       socketRef.current?.disconnect();
       socketRef.current = null;
     };
@@ -240,18 +265,22 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
     const validation = validateMarketData(q);
 
     if (!validation.isValid) {
-      // Return a safe null-state — avoids the -200% spread bug when market is closed
-      // and bid/ask are zero.
+      // Use 'MARKET CLOSED' only when the session is actually closed.
+      // When the market IS open but bid/ask are missing (common for illiquid stocks),
+      // use 'LIMIT ONLY' so we don't falsely report the market as closed.
+      const sessionOpen = getMarketSessionStatus().isOpen;
+      const hasLtp = q && (q.last_traded_price > 0 || (q.ltp ?? 0) > 0);
+      const execStyle = (!sessionOpen || !hasLtp) ? 'MARKET CLOSED' : 'LIMIT ONLY';
       return {
         spread_pct: null,
         depth_ratio: null,
         vol_ratio: null,
         regime: 'NEUTRAL',
-        execution_style: 'MARKET CLOSED',
+        execution_style: execStyle,
         bid: 0, ask: 0, bidQty: 0, askQty: 0,
         avg_vol_20d: avgVol || null,
         liquidity_quality_score: 0,
-        liquidity_grade: 'F',
+        liquidity_grade: execStyle === 'MARKET CLOSED' ? 'F' : 'D',
         is_tradeable: false,
         risk_level: 'EXTREME',
         spread_status: 'AVOID',
@@ -458,9 +487,28 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
           >
             Raw Feed
           </button>
-          <p className="text-[9px] font-black text-indigo-600 uppercase tracking-tight mt-1">
-            {marketStatus.isOpen ? 'Live tick feed' : 'Polling suspended'}
-          </p>
+          {marketStatus.isOpen ? (
+            <div className="flex items-center gap-1">
+              {lastTickMs && (Date.now() - lastTickMs) < FEED_HEALTHY_THRESHOLD_MS ? (
+                <>
+                  <span className="flex h-1.5 w-1.5 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-emerald-400"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                  </span>
+                  <p className="text-[8px] font-black text-emerald-600 uppercase tracking-tight">Live · {tickCount} ticks</p>
+                </>
+              ) : (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block"></span>
+                  <p className="text-[8px] font-black text-amber-600 uppercase tracking-tight">
+                    {lastTickMs ? 'Awaiting ticks…' : 'Connecting…'}
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-tight">Polling suspended</p>
+          )}
         </div>
       </div>
 
