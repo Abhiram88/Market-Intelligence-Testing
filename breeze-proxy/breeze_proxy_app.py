@@ -1479,8 +1479,9 @@ def track_watchlist(stock_list, proxy_key, sid):
 
     # Subscribe only NEW feeds — feeds already in _subscribed_breeze_codes are skipped.
     # get_exchange_quotes=True gives tick-by-tick LTP + L1 bid/ask updates.
-    # get_market_depth=False — exchange quotes already include L1 bid/ask; depth adds
-    #   full 5-level order book which is not needed for the watchlist card.
+    # get_market_depth=True for individual stocks — depth ticks fire on order-book changes,
+    #   providing more frequent real-time updates even when no trades occur (critical for
+    #   illiquid stocks).  NIFTY (index) only needs exchange quotes.
     newly_subscribed = []
     for symbol in stock_list:
         std = canonical_symbol(symbol)
@@ -1488,17 +1489,19 @@ def track_watchlist(stock_list, proxy_key, sid):
         if breeze_code in _subscribed_breeze_codes:
             logger.info(f"Feed already active: {symbol} ({breeze_code}) — skipping")
             continue
+        is_index = std == "NIFTY"
         try:
-            client.subscribe_feeds(
+            resp = client.subscribe_feeds(
                 exchange_code="NSE",
                 stock_code=breeze_code,
                 product_type="cash",
                 get_exchange_quotes=True,
-                get_market_depth=False
+                get_market_depth=(not is_index)
             )
             _subscribed_breeze_codes.add(breeze_code)
             newly_subscribed.append((breeze_code, symbol))
-            logger.info(f"Subscribed to feed: {symbol} → Breeze code '{breeze_code}'")
+            logger.info(f"Subscribed to feed: {symbol} → Breeze code '{breeze_code}' "
+                        f"(depth={'yes' if not is_index else 'no'}) resp={resp!r}")
         except Exception as e:
             logger.error(f"Failed to subscribe to {symbol} ({breeze_code}): {e}")
 
@@ -1530,7 +1533,18 @@ def track_watchlist(stock_list, proxy_key, sid):
             logger.warning(f"Initial quote fetch failed for {symbol}: {e}")
 
     # Keep background task alive while this SID is connected.
-    # Ticks arrive via _global_on_ticks → _tick_dispatch_queue → _dispatch_tick — no polling needed.
+    # WebSocket ticks arrive via _global_on_ticks → _tick_dispatch_queue → _dispatch_tick.
+    # ADDITIONALLY, poll REST quotes every few seconds for non-NIFTY watchlist stocks.
+    # This guarantees the UI updates even when Breeze WebSocket doesn't deliver ticks
+    # for individual equities (exchange-quote ticks only fire on trades — illiquid stocks
+    # can go minutes without a trade, and some Breeze subscription quirks may prevent
+    # ticks for equities altogether).  NIFTY is excluded because it already gets reliable
+    # WebSocket ticks as a highly-liquid index.
+    poll_stocks = [(canonical_symbol(s), get_breeze_symbol(canonical_symbol(s)))
+                   for s in stock_list if canonical_symbol(s) != "NIFTY"]
+    poll_interval = 5   # seconds between REST refreshes
+    logger.info(f"[poll] Starting REST quote poll for {len(poll_stocks)} stocks every {poll_interval}s: "
+                f"{[s for s, _ in poll_stocks]}")
     while True:
         try:
             if not socketio.server.manager.is_connected(sid, '/'):
@@ -1538,7 +1552,26 @@ def track_watchlist(stock_list, proxy_key, sid):
                 break
         except Exception:
             break
-        socketio.sleep(5)
+
+        # Refresh REST quotes for non-NIFTY watchlist stocks.
+        for std, breeze_code in poll_stocks:
+            try:
+                res = client.get_quotes(
+                    stock_code=breeze_code,
+                    exchange_code="NSE",
+                    product_type="cash"
+                )
+                raw = normalize_breeze_response(res)
+                if isinstance(raw, list):
+                    raw = raw[0] if raw else None
+                if raw and isinstance(raw, dict):
+                    payload = normalize_tick_for_frontend(dict(raw), std)
+                    socketio.emit('watchlist_update', payload, to=sid, namespace='/')
+                    logger.debug(f"[poll] {std} ltp={payload.get('ltp')}")
+            except Exception as e:
+                logger.debug(f"[poll] REST quote failed for {std}: {e}")
+
+        socketio.sleep(poll_interval)
 
     # SID disconnected: remove from registry (also done in handle_disconnect, but belt-and-suspenders).
     _unregister_sid(sid)
@@ -1548,13 +1581,14 @@ def track_watchlist(stock_list, proxy_key, sid):
         std = canonical_symbol(symbol)
         remaining = _tick_registry.get(std, set())
         if not remaining:
+            is_index = std == "NIFTY"
             try:
                 client.unsubscribe_feeds(
                     exchange_code="NSE",
                     stock_code=breeze_code,
                     product_type="cash",
                     get_exchange_quotes=True,
-                    get_market_depth=False
+                    get_market_depth=(not is_index)
                 )
                 _subscribed_breeze_codes.discard(breeze_code)
                 logger.info(f"Unsubscribed feed (no more subscribers): {symbol} ({breeze_code})")
