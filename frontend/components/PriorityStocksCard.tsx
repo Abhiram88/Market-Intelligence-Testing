@@ -36,12 +36,19 @@ interface PriorityStocksCardProps {
 }
 
 export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyTick }) => {
+  const STALE_THRESHOLD_MS = 60_000;
+  const FEED_HEALTHY_THRESHOLD_MS = 15_000;
+
   const [priorityStocks, setPriorityStocks] = useState<PriorityStock[]>([]);
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [historicalCache, setHistoricalCache] = useState<Record<string, number>>({});
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const [showRawFeed, setShowRawFeed] = useState(false);
+  const [tickCount, setTickCount] = useState(0);
+  const [lastTickMs, setLastTickMs] = useState<number | null>(null);
+  const lastTickMsRef = useRef<number | null>(null);
+  const stalenessTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Keep a stable ref to onNiftyTick so the socket closure doesn't go stale.
   const onNiftyTickRef = useRef(onNiftyTick);
@@ -141,6 +148,14 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
         const symbol = String(data.symbol || '').toUpperCase();
         if (!symbol) return;
 
+        // Track ALL ticks (including NIFTY) for feed health and staleness detection.
+        // Previously this was after the NIFTY early-return, so the staleness watchdog
+        // thought no data was flowing even when NIFTY ticks arrived every second.
+        const now = Date.now();
+        setTickCount(n => n + 1);
+        setLastTickMs(now);
+        lastTickMsRef.current = now;
+
         if (symbol === 'NIFTY' || symbol === 'NIFTY 50') {
           // Route to the Nifty card via the callback from MonitorTab.
           onNiftyTickRef.current?.(data);
@@ -160,6 +175,24 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
               previous_close: normalized.previous_close !== 0
                 ? normalized.previous_close
                 : (existing?.previous_close ?? 0),
+      // Preserve bid/ask/volume: depth ticks may not carry trade data, exchange-quote ticks
+      // may not carry depth data. Keep previous good values when the new tick delivers 0.
+              best_bid_price: normalized.best_bid_price
+                ? normalized.best_bid_price : (existing?.best_bid_price ?? 0),
+              best_bid_quantity: normalized.best_bid_quantity
+                ? normalized.best_bid_quantity : (existing?.best_bid_quantity ?? 0),
+              best_offer_price: normalized.best_offer_price
+                ? normalized.best_offer_price : (existing?.best_offer_price ?? 0),
+              best_offer_quantity: normalized.best_offer_quantity
+                ? normalized.best_offer_quantity : (existing?.best_offer_quantity ?? 0),
+              volume: normalized.volume !== 0
+                ? normalized.volume : (existing?.volume ?? 0),
+              total_quantity_traded: normalized.volume !== 0
+                ? normalized.volume : (existing?.total_quantity_traded ?? existing?.volume ?? 0),
+              last_traded_price: normalized.last_traded_price !== 0
+                ? normalized.last_traded_price : (existing?.last_traded_price ?? 0),
+              ltp: normalized.last_traded_price !== 0
+                ? normalized.last_traded_price : (existing?.ltp ?? existing?.last_traded_price ?? 0),
             },
           };
         });
@@ -194,8 +227,22 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
 
     connect();
 
+    stalenessTimerRef.current = setInterval(() => {
+      const socket = socketRef.current;
+      if (!socket?.connected) return;
+      if (!getMarketSessionStatus().isOpen) return;
+      const last = lastTickMsRef.current;
+      if (last !== null && Date.now() - last < STALE_THRESHOLD_MS) return;
+      console.warn('[PriorityStocksCard] Stale feed detected — re-subscribing…');
+      socket.emit('subscribe_to_watchlist', {
+        stocks: symbolsToSubscribe,
+        proxy_key: localStorage.getItem('breeze_proxy_key') || '',
+      });
+    }, 30_000);
+
     return () => {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (stalenessTimerRef.current) clearInterval(stalenessTimerRef.current);
       socketRef.current?.disconnect();
       socketRef.current = null;
     };
@@ -222,18 +269,22 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
     const validation = validateMarketData(q);
 
     if (!validation.isValid) {
-      // Return a safe null-state — avoids the -200% spread bug when market is closed
-      // and bid/ask are zero.
+      // Use 'MARKET CLOSED' only when the session is actually closed.
+      // When the market IS open but bid/ask are missing (common for illiquid stocks),
+      // use 'LIMIT ONLY' so we don't falsely report the market as closed.
+      const sessionOpen = getMarketSessionStatus().isOpen;
+      const hasLtp = q && (q.last_traded_price > 0 || (q.ltp ?? 0) > 0);
+      const execStyle = (!sessionOpen || !hasLtp) ? 'MARKET CLOSED' : 'LIMIT ONLY';
       return {
         spread_pct: null,
         depth_ratio: null,
         vol_ratio: null,
         regime: 'NEUTRAL',
-        execution_style: 'MARKET CLOSED',
+        execution_style: execStyle,
         bid: 0, ask: 0, bidQty: 0, askQty: 0,
         avg_vol_20d: avgVol || null,
         liquidity_quality_score: 0,
-        liquidity_grade: 'F',
+        liquidity_grade: execStyle === 'MARKET CLOSED' ? 'F' : 'D',
         is_tradeable: false,
         risk_level: 'EXTREME',
         spread_status: 'AVOID',
@@ -440,9 +491,28 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
           >
             Raw Feed
           </button>
-          <p className="text-[9px] font-black text-indigo-600 uppercase tracking-tight mt-1">
-            {marketStatus.isOpen ? 'Live tick feed' : 'Polling suspended'}
-          </p>
+          {marketStatus.isOpen ? (
+            <div className="flex items-center gap-1">
+              {lastTickMs && (Date.now() - lastTickMs) < FEED_HEALTHY_THRESHOLD_MS ? (
+                <>
+                  <span className="flex h-1.5 w-1.5 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-emerald-400"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                  </span>
+                  <p className="text-[8px] font-black text-emerald-600 uppercase tracking-tight">Live · {tickCount} ticks</p>
+                </>
+              ) : (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block"></span>
+                  <p className="text-[8px] font-black text-amber-600 uppercase tracking-tight">
+                    {lastTickMs ? 'Awaiting ticks…' : 'Connecting…'}
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <p className="text-[8px] font-black text-slate-400 uppercase tracking-tight">Polling suspended</p>
+          )}
         </div>
       </div>
 
@@ -457,7 +527,9 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
             const quote = quotes[stock.symbol];
             const metrics = calculateMetrics(stock.symbol);
             const error = errors[stock.symbol];
-            const displayPrice = quote?.last_traded_price ?? quote?.ltp ?? null;
+            // Use || (not ??) so that 0 falls through to the next field.
+            // In Indian markets stock prices are never ₹0; zero means "no data yet".
+            const displayPrice = quote?.last_traded_price || quote?.ltp || null;
             const displayPct = quote?.percent_change ?? quote?.ltp_percent_change ?? null;
             const isPositive = (quote?.change ?? 0) >= 0;
             const isExpanded = expandedSymbol === stock.symbol;
@@ -518,45 +590,142 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
                           </div>
                         ) : (
                           <div className="space-y-5">
+                            {/* Liquidity Quality Score Card */}
+                            <div className="p-4 bg-gradient-to-br from-slate-50 to-white rounded-xl border border-slate-100">
+                              <div className="flex items-center justify-between mb-3">
+                                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Liquidity Quality</p>
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-2xl font-black tabular-nums ${
+                                    metrics?.liquidity_grade === 'A' ? 'text-emerald-600' :
+                                    metrics?.liquidity_grade === 'B' ? 'text-green-600' :
+                                    metrics?.liquidity_grade === 'C' ? 'text-amber-600' :
+                                    metrics?.liquidity_grade === 'D' ? 'text-orange-600' :
+                                    'text-rose-600'
+                                  }`}>
+                                    {metrics?.liquidity_grade || '—'}
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-400">
+                                    {metrics?.liquidity_quality_score ?? 0}/100
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Progress bar */}
+                              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full transition-all duration-500 ${
+                                    (metrics?.liquidity_quality_score ?? 0) >= 85 ? 'bg-emerald-500' :
+                                    (metrics?.liquidity_quality_score ?? 0) >= 70 ? 'bg-green-500' :
+                                    (metrics?.liquidity_quality_score ?? 0) >= 55 ? 'bg-amber-500' :
+                                    (metrics?.liquidity_quality_score ?? 0) >= 40 ? 'bg-orange-500' :
+                                    'bg-rose-500'
+                                  }`}
+                                  style={{ width: `${metrics?.liquidity_quality_score ?? 0}%` }}
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-between mt-2">
+                                <span className={`px-2 py-1 rounded text-[8px] font-black uppercase tracking-widest border ${
+                                  metrics?.is_tradeable
+                                    ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                    : 'bg-rose-50 text-rose-600 border-rose-100'
+                                }`}>
+                                  {metrics?.is_tradeable ? 'TRADEABLE' : 'AVOID'}
+                                </span>
+
+                                <span className={`px-2 py-1 rounded text-[8px] font-black uppercase tracking-widest border ${
+                                  metrics?.risk_level === 'LOW' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                  metrics?.risk_level === 'MEDIUM' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                                  metrics?.risk_level === 'HIGH' ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                  'bg-rose-50 text-rose-600 border-rose-100'
+                                }`}>
+                                  RISK: {metrics?.risk_level || '—'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Bid/Ask/Spread Grid - Enhanced */}
                             <div className="grid grid-cols-3 gap-4">
                               <div className="flex flex-col gap-1.5">
                                 <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Best Bid</p>
                                 <p className="text-[10px] font-black text-slate-900 tabular-nums">
-                                  ₹{metrics?.bid?.toLocaleString() || '—'} <span className="text-slate-400 text-[8px]">({metrics?.bidQty || 0})</span>
+                                  ₹{metrics?.bid?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '—'}
                                 </p>
+                                <p className="text-[8px] font-bold text-slate-400">{(metrics?.bidQty ?? 0).toLocaleString()} shares</p>
                               </div>
+
                               <div className="flex flex-col gap-1.5">
                                 <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Best Ask</p>
                                 <p className="text-[10px] font-black text-slate-900 tabular-nums">
-                                  ₹{metrics?.ask?.toLocaleString() || '—'} <span className="text-slate-400 text-[8px]">({metrics?.askQty || 0})</span>
+                                  ₹{metrics?.ask?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '—'}
                                 </p>
+                                <p className="text-[8px] font-bold text-slate-400">{(metrics?.askQty ?? 0).toLocaleString()} shares</p>
                               </div>
+
                               <div className="flex flex-col gap-1.5 text-right">
-                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Spread %</p>
-                                <div>
+                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Spread</p>
+                                <div className="space-y-1">
                                   <span className={`px-2 py-1 rounded text-[10px] font-black tabular-nums border inline-block ${
-                                    !metrics || metrics.spread_pct === null ? 'bg-slate-50 text-slate-400 border-slate-100' :
-                                    metrics.spread_pct < 0.15 ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                                    metrics.spread_pct < 0.50 ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-rose-50 text-rose-600 border-rose-100'
+                                    metrics?.spread_status === 'EXCELLENT' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                    metrics?.spread_status === 'GOOD' ? 'bg-green-50 text-green-600 border-green-100' :
+                                    metrics?.spread_status === 'ACCEPTABLE' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                                    metrics?.spread_status === 'POOR' ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                    'bg-rose-50 text-rose-600 border-rose-100'
                                   }`}>
                                     {metrics?.spread_pct !== null && metrics?.spread_pct !== undefined ? metrics.spread_pct.toFixed(3) + '%' : '—'}
                                   </span>
+                                  <p className="text-[7px] font-bold text-slate-400 uppercase tracking-widest">{metrics?.spread_status || '—'}</p>
                                 </div>
                               </div>
                             </div>
 
+                            {/* Volume/Depth/Regime Grid - Enhanced */}
                             <div className="grid grid-cols-4 gap-4 pt-4 border-t border-slate-50">
                               <div className="flex flex-col gap-1.5">
                                 <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Vol Today</p>
-                                <p className="text-[9px] font-black text-slate-900">{((quote?.total_quantity_traded ?? quote?.volume ?? 0) > 0 ? (((quote?.total_quantity_traded ?? quote?.volume) ?? 0) / 1000000).toFixed(2) : '—')}M</p>
-                              </div>
-                              <div className="flex flex-col gap-1.5 text-center">
-                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Vol Ratio</p>
-                                <p className={`text-[9px] font-black ${metrics?.vol_ratio ? (metrics.vol_ratio > 2 ? 'text-emerald-600' : metrics.vol_ratio < 1 ? 'text-rose-500' : 'text-slate-900') : 'text-slate-400'}`}>
-                                  {metrics?.vol_ratio?.toFixed(2) || '0.00'}x
+                                <p className="text-[9px] font-black text-slate-900">
+                                  {(quote?.total_quantity_traded ?? quote?.volume ?? 0) > 0
+                                    ? ((quote?.total_quantity_traded ?? quote?.volume ?? 0) / 1000000).toFixed(2) + 'M'
+                                    : '—'}
                                 </p>
                               </div>
+
                               <div className="flex flex-col gap-1.5 text-center">
+                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Vol Ratio</p>
+                                <div className="space-y-0.5">
+                                  <p className={`text-[9px] font-black ${
+                                    metrics?.volume_status === 'HIGH' || metrics?.volume_status === 'ELEVATED' ? 'text-emerald-600' :
+                                    metrics?.volume_status === 'LOW' ? 'text-rose-500' :
+                                    metrics?.volume_status === 'EXTREME' ? 'text-orange-600' :
+                                    'text-slate-900'
+                                  }`}>
+                                    {metrics?.vol_ratio ? metrics.vol_ratio.toFixed(2) + 'x' : '—'}
+                                  </p>
+                                  <p className="text-[7px] font-bold text-slate-400 uppercase">{metrics?.volume_status || '—'}</p>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col gap-1.5 text-center">
+                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Depth</p>
+                                <div className="space-y-0.5">
+                                  <p className={`text-[9px] font-black ${
+                                    metrics?.depth_status === 'BUYING BIAS' || metrics?.depth_status === 'HEAVY BUYING' ? 'text-emerald-600' :
+                                    metrics?.depth_status === 'SELLING BIAS' || metrics?.depth_status === 'HEAVY SELLING' ? 'text-rose-600' :
+                                    'text-slate-900'
+                                  }`}>
+                                    {metrics?.depth_ratio?.toFixed(2) || '—'}
+                                  </p>
+                                  <p className="text-[7px] font-bold text-slate-400 uppercase tracking-tight leading-tight">{
+                                    metrics?.depth_status === 'HEAVY SELLING' ? 'HEAVY SELL' :
+                                    metrics?.depth_status === 'SELLING BIAS' ? 'SELL BIAS' :
+                                    metrics?.depth_status === 'BUYING BIAS' ? 'BUY BIAS' :
+                                    metrics?.depth_status === 'HEAVY BUYING' ? 'HEAVY BUY' :
+                                    'BALANCED'
+                                  }</p>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col gap-1.5 text-right">
                                 <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Regime</p>
                                 <div>
                                   <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border inline-block ${
@@ -568,63 +737,58 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
                                   </span>
                                 </div>
                               </div>
-                              <div className="flex flex-col gap-1.5 text-right">
-                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Exec Style</p>
-                                <div>
-                                  <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border inline-block ${
-                                    metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                                    metrics?.execution_style === 'AVOID' ? 'bg-rose-50 text-rose-600 border-rose-100' :
-                                    metrics?.execution_style === 'CAUTION' ? 'bg-orange-50 text-orange-600 border-orange-100' :
-                                    metrics?.execution_style === 'MARKET CLOSED' ? 'bg-slate-50 text-slate-400 border-slate-100' :
-                                    'bg-amber-50 text-amber-600 border-amber-100'
-                                  }`}>
-                                    {metrics?.execution_style || '—'}
-                                  </span>
-                                </div>
-                              </div>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-4 pt-4 border-t border-slate-50">
-                              <div className="flex flex-col gap-1.5">
-                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Liq Grade</p>
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-black border inline-block w-fit ${
-                                  metrics?.liquidity_grade === 'A' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                                  metrics?.liquidity_grade === 'B' ? 'bg-teal-50 text-teal-600 border-teal-100' :
-                                  metrics?.liquidity_grade === 'C' ? 'bg-amber-50 text-amber-600 border-amber-100' :
-                                  metrics?.liquidity_grade === 'D' ? 'bg-orange-50 text-orange-600 border-orange-100' :
-                                  'bg-rose-50 text-rose-600 border-rose-100'
+                            {/* Execution Style Section - Enhanced */}
+                            <div className="pt-4 border-t border-slate-50">
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Execution Style</p>
+                                <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border-2 ${
+                                  metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                  metrics?.execution_style === 'CAUTION' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                  metrics?.execution_style === 'AVOID' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                                  metrics?.execution_style === 'MARKET CLOSED' ? 'bg-slate-50 text-slate-500 border-slate-200' :
+                                  'bg-blue-50 text-blue-700 border-blue-200'
                                 }`}>
-                                  {metrics?.liquidity_grade || '—'}
+                                  {metrics?.execution_style || '—'}
                                 </span>
                               </div>
-                              <div className="flex flex-col gap-1.5 text-center">
-                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Liq Score</p>
-                                <p className="text-[9px] font-black text-slate-900">
-                                  {metrics?.liquidity_quality_score ?? '—'}<span className="text-slate-400 text-[7px]">/100</span>
-                                </p>
+
+                              {/* Execution Hint */}
+                              <div className={`p-3 rounded-lg border text-[9px] font-medium leading-relaxed ${
+                                metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-50/50 border-emerald-100 text-emerald-900' :
+                                metrics?.execution_style === 'CAUTION' ? 'bg-amber-50/50 border-amber-100 text-amber-900' :
+                                metrics?.execution_style === 'AVOID' ? 'bg-rose-50/50 border-rose-100 text-rose-900' :
+                                'bg-blue-50/50 border-blue-100 text-blue-900'
+                              }`}>
+                                {metrics?.execution_hint || 'Calculating...'}
                               </div>
-                              <div className="flex flex-col gap-1.5 text-right">
-                                <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Session</p>
-                                <span className={`px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest border inline-block ${
-                                  metrics?.time_regime === 'OPENING' || metrics?.time_regime === 'CLOSING' ? 'bg-orange-50 text-orange-600 border-orange-100' :
-                                  metrics?.time_regime === 'NORMAL' ? 'bg-slate-50 text-slate-500 border-slate-100' :
-                                  'bg-slate-50 text-slate-300 border-slate-100'
-                                }`}>
-                                  {metrics?.time_regime || '—'}
-                                </span>
-                              </div>
+
+                              {/* Time Context */}
+                              {metrics?.time_regime !== 'AFTER_HOURS' && (
+                                <div className="flex items-center gap-2 mt-2">
+                                  <div className={`w-2 h-2 rounded-full ${
+                                    metrics?.time_regime === 'NORMAL' ? 'bg-emerald-500' : 'bg-amber-500'
+                                  }`} />
+                                  <p className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">
+                                    {metrics?.time_regime === 'OPENING' ? 'Opening Session (9:15-10:00 AM)' :
+                                     metrics?.time_regime === 'CLOSING' ? 'Closing Session (3:00-3:30 PM)' :
+                                     'Normal Trading Hours'}
+                                  </p>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
 
+                        {/* Footer with recommendation hint */}
                         <div className="flex items-center justify-between gap-4 pt-4 border-t border-slate-50">
                           <div className="flex items-center gap-2">
                             <div className={`w-1.5 h-1.5 rounded-full ${
                               metrics?.execution_style === 'OK FOR MARKET' ? 'bg-emerald-500' :
                               metrics?.execution_style === 'AVOID' ? 'bg-rose-500' :
-                              metrics?.execution_style === 'CAUTION' ? 'bg-orange-500' :
-                              metrics?.execution_style === 'MARKET CLOSED' ? 'bg-slate-300' :
-                              'bg-amber-500'
+                              metrics?.execution_style === 'CAUTION' ? 'bg-amber-500' :
+                              'bg-blue-500'
                             }`} />
                             <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
                               {getRecommendationHint(metrics)}
@@ -632,7 +796,9 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
                           </div>
                           <div className="flex items-baseline gap-1">
                             <span className="text-[7px] font-black text-slate-400 uppercase">Avg Vol (20D):</span>
-                            <span className="text-[8px] font-bold text-slate-600">{metrics?.avg_vol_20d ? (metrics.avg_vol_20d / 1000000).toFixed(1) : '—'}M</span>
+                            <span className="text-[8px] font-bold text-slate-600">
+                              {metrics?.avg_vol_20d ? (metrics.avg_vol_20d / 1000000).toFixed(1) : '—'}M
+                            </span>
                           </div>
                         </div>
                       </>

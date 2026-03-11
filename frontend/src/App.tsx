@@ -19,7 +19,15 @@ const App: React.FC = () => {
       />
       
       <main className="w-full px-4 sm:px-6 lg:px-10 py-8">
-        {activeTab === 'monitor' && <MonitorTab />}
+        {/*
+          MonitorTab is always mounted so the Socket.IO connection and REST poll
+          stay alive when the user switches to other tabs.
+          Conditional rendering with && was unmounting it on tab switch, killing
+          the socket and poll task — data only "refreshed" when you switched back.
+        */}
+        <div style={{ display: activeTab === 'monitor' ? 'block' : 'none' }}>
+          <MonitorTab />
+        </div>
         {activeTab === 'research' && <ResearchTab />}
         {activeTab === 'reg30' && <Reg30Tab />}
       </main>

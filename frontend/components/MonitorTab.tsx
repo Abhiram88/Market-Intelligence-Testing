@@ -27,11 +27,19 @@ const MonitorTab: React.FC = () => {
   // Called by PriorityStocksCard when a NIFTY tick arrives on the shared socket.
   const onNiftyTick = useCallback((data: Record<string, unknown>) => {
     const normalized = normalizeBreezeQuoteFromRow(data, 'NIFTY');
+    const hasLtp = normalized.last_traded_price !== 0;
     setTelemetry(prev => ({
       // Keep mandatory identity fields from the new tick.
       ...normalized,
       dataSource: 'Breeze Direct' as const,
       errorType: 'none',
+      // Preserve LTP when the tick doesn't carry trade data (depth-only or heartbeat ticks).
+      last_traded_price: hasLtp
+        ? normalized.last_traded_price : (prev?.last_traded_price ?? 0),
+      // When LTP is absent the normalization computes wrong change/% (0 - prevClose).
+      // Keep the previous good values until a tick with real trade data arrives.
+      change: hasLtp ? normalized.change : (prev?.change ?? 0),
+      percent_change: hasLtp ? normalized.percent_change : (prev?.percent_change ?? 0),
       // Preserve the session high/low from previous ticks if the new tick delivers zeros.
       // Breeze WebSocket ticks include H/L only when they change, so a 0 means "no update".
       high: normalized.high !== 0 ? normalized.high : (prev?.high ?? 0),
@@ -40,6 +48,8 @@ const MonitorTab: React.FC = () => {
       previous_close: normalized.previous_close !== 0
         ? normalized.previous_close
         : (prev?.previous_close ?? 0),
+      volume: normalized.volume !== 0
+        ? normalized.volume : (prev?.volume ?? 0),
     }));
   }, []);
 
