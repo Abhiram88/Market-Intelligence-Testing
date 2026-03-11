@@ -148,6 +148,14 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
         const symbol = String(data.symbol || '').toUpperCase();
         if (!symbol) return;
 
+        // Track ALL ticks (including NIFTY) for feed health and staleness detection.
+        // Previously this was after the NIFTY early-return, so the staleness watchdog
+        // thought no data was flowing even when NIFTY ticks arrived every second.
+        const now = Date.now();
+        setTickCount(n => n + 1);
+        setLastTickMs(now);
+        lastTickMsRef.current = now;
+
         if (symbol === 'NIFTY' || symbol === 'NIFTY 50') {
           // Route to the Nifty card via the callback from MonitorTab.
           onNiftyTickRef.current?.(data);
@@ -155,10 +163,6 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
         }
 
         const normalized = normalizeBreezeQuoteFromRow(data, symbol);
-        const now = Date.now();
-        setTickCount(n => n + 1);
-        setLastTickMs(now);
-        lastTickMsRef.current = now;
         setQuotes(prev => {
           const existing = prev[symbol];
           return {
