@@ -454,7 +454,7 @@ const Reg30Tab: React.FC = () => {
                       <div className="lg:col-span-4 space-y-6">
                         <div className="flex flex-col gap-2">
                           <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Action Recommendation</h4>
-                          <p className="text-[12px] font-black text-indigo-600 uppercase tracking-widest">{report.recommendation.replace(/_/g, ' ')}</p>
+                          <p className="text-[12px] font-black text-indigo-600 uppercase tracking-widest">{(report.recommendation || 'TRACK').replace(/_/g, ' ')}</p>
                         </div>
 
                         <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-5 flex flex-col min-h-[300px]">

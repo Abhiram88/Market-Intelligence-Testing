@@ -527,7 +527,9 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
             const quote = quotes[stock.symbol];
             const metrics = calculateMetrics(stock.symbol);
             const error = errors[stock.symbol];
-            const displayPrice = quote?.last_traded_price ?? quote?.ltp ?? null;
+            // Use || (not ??) so that 0 falls through to the next field.
+            // In Indian markets stock prices are never ₹0; zero means "no data yet".
+            const displayPrice = quote?.last_traded_price || quote?.ltp || null;
             const displayPct = quote?.percent_change ?? quote?.ltp_percent_change ?? null;
             const isPositive = (quote?.change ?? 0) >= 0;
             const isExpanded = expandedSymbol === stock.symbol;
