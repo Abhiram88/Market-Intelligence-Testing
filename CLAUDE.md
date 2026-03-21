@@ -99,5 +99,5 @@ Key tables: `nse_master_list` (NSE→Breeze symbol mappings), `market_logs`, `ne
 ## Deployment
 
 - **Frontend**: Netlify (`frontend/dist`, SPA redirect configured)
-- **Breeze Proxy**: Google Cloud Run (eventlet/gunicorn worker)
+- **Breeze Proxy**: Google Cloud Run (eventlet/gunicorn worker) — source at https://github.com/Abhiram88/MAIA-Breeze-Proxy.git
 - **Main API**: Not containerized; run directly or behind a process manager
