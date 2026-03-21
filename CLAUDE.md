@@ -81,8 +81,44 @@ Key services:
 - `services/reg30GeminiService.ts` — Reg30-specific Gemini analysis
 - `lib/supabase.ts` — Supabase client
 
-### Database (Supabase)
-Key tables: `nse_master_list` (NSE→Breeze symbol mappings), `market_logs`, `news_attribution` (AI analysis results).
+### Database (Supabase — `public` schema)
+
+**Event Analysis Pipeline:**
+| Table | Purpose |
+|---|---|
+| `ingestion_runs` | Tracks each data ingestion run |
+| `event_candidates` | Raw candidate events (FK → `ingestion_runs`) |
+| `analyzed_events` | Analyzed events with confidence/impact scores (FK → `ingestion_runs`, `event_candidates`) |
+| `historical_event_analysis` | Full historical event analysis with pre/post price data (53 cols) |
+| `event_price_history` | Price snapshots linked to events (FK → `historical_event_analysis`) |
+| `event_processing_queue` | Retry queue for event processing (FK → `historical_event_analysis`) |
+| `processing_logs` | Processing log entries (FK → `historical_event_analysis`) |
+| `pattern_statistics` | Statistical analysis of trading patterns |
+
+**Market Data:**
+| Table | Purpose |
+|---|---|
+| `market_logs` | Daily NIFTY index data |
+| `news_attribution` | AI-attributed news → market movements (FK → `market_logs`) |
+| `ledger_events` | Market ledger entries with sentiment score, affected stocks/sectors (arrays) |
+| `ledger_sources` | Source links for ledger events (FK → `ledger_events`) |
+| `volatile_queue` | Volatile market condition queue (PK: `log_date`) |
+
+**Reference & Support:**
+| Table | Purpose |
+|---|---|
+| `nse_master_list` | NSE symbol mappings; PK is `short_name` (text), not UUID |
+| `priority_stocks` | Priority watchlist stocks |
+| `gemini_cache` | Cache for Gemini API responses |
+| `research_status` | Research system status tracking |
+| `iq_schema_meta` | Schema version metadata |
+
+**Key schema notes:**
+- All major tables use UUID PKs (`gen_random_uuid()`), except `nse_master_list` (PK: `short_name`) and `volatile_queue` (PK: `log_date`)
+- `analyzed_events.event_fingerprint` is a deduplication key (NOT NULL)
+- `historical_event_analysis` tracks full price timeline: `price_30d_before` → `price_90d_after`, plus returns (`return_7d_pct`, `return_30d_pct`, `return_90d_pct`) and volume analysis
+- `event_processing_queue` has `retry_count` / `max_retries` (default 3) for resilience
+- `ledger_events.affected_stocks` and `affected_sectors` are `text[]` arrays
 
 ## Key Patterns
 
