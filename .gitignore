@@ -1,0 +1,13 @@
+# Environment variables (keep .env.example so others know required vars)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+
+# Node.js
+/frontend/node_modules
+/frontend/dist
+env.yaml
