@@ -63,6 +63,8 @@ Frontend (React, :8082)
 - Socket.IO — real-time watchlist subscriptions
 
 ### Breeze Proxy (`breeze-proxy/breeze_proxy_app.py`, ~1450 lines)
+> **Reference copy only** — this file mirrors the live code on Google Cloud Run but is **not auto-deployed**. After editing, the server must be updated manually.
+
 Secure intermediary keeping ICICI Breeze API credentials server-side. Key responsibilities:
 - BreezeConnect WebSocket client → tick queue → Socket.IO room dispatch
 - Symbol mapping (hardcoded overrides + Supabase `nse_master_list` fallback)
