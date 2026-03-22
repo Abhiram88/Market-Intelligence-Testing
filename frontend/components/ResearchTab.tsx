@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { ResearchTask } from '../types';
-import { Database, Play, CheckCircle, Clock, Loader2, XCircle } from 'lucide-react';
+import { Database, Play, CheckCircle, Clock, Loader2, CircleX } from 'lucide-react';
 
 const ResearchTab: React.FC = () => {
   const [tasks, setTasks] = useState<ResearchTask[]>([]);
@@ -20,7 +20,7 @@ const ResearchTab: React.FC = () => {
   const statusConfig = {
     completed: { icon: <CheckCircle className="w-3.5 h-3.5" />, className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
     in_progress: { icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />, className: 'bg-blue-50 text-blue-700 border-blue-200' },
-    failed: { icon: <XCircle className="w-3.5 h-3.5" />, className: 'bg-rose-50 text-rose-700 border-rose-200' },
+    failed: { icon: <CircleX className="w-3.5 h-3.5" />, className: 'bg-rose-50 text-rose-700 border-rose-200' },
     pending: { icon: <Clock className="w-3.5 h-3.5" />, className: 'bg-amber-50 text-amber-700 border-amber-200' },
   };
 
