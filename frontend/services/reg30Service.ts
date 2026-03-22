@@ -25,11 +25,14 @@ async function analyzeEventNarrativeViaProxy(inputs: {
   tactical_plan?: string;
   trigger_text?: string;
 }): Promise<{ event_analysis_text: string; tone: string } | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
   try {
     const res = await fetch(resolveBreezeUrl('/api/gemini/reg30-narrative'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(inputs),
+      signal: ctrl.signal,
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -37,11 +40,15 @@ async function analyzeEventNarrativeViaProxy(inputs: {
     return null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /** Call proxy to run Reg30 Gemini analysis (no API key needed in frontend). */
 async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg30Analysis | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90000); // Gemini 2.5-pro can take up to 90s
   try {
     const res = await fetch(resolveBreezeUrl('/api/gemini/reg30-analyze'), {
       method: 'POST',
@@ -55,6 +62,7 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
         },
         attachment_text: candidate.attachment_text || '',
       }),
+      signal: ctrl.signal,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -80,6 +88,8 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
   } catch (e) {
     console.error('Reg30 proxy analysis failed:', e);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -196,20 +206,29 @@ const normalizeCompany = (v: string | null | undefined): string =>
   (!v || v === 'Unknown') ? '' : v.trim();
 
 
+/** StockInsights PDFs are image-scanned (binary JPX); pypdf returns empty text. Skip parse entirely. */
+const isImagePdfUrl = (url: string) =>
+  url.includes('stockinsights-ai.s3') || url.includes('stockinsights-ai.s3.amazonaws.com');
+
 export const fetchAttachmentText = async (url: string): Promise<string> => {
-  if (!url) return "";
+  if (!url || isImagePdfUrl(url)) return "";
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
     const parserEndpoint = resolveBreezeUrl('/api/attachment/parse');
     const response = await fetch(parserEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url }),
+      signal: ctrl.signal,
     });
     if (!response.ok) return "";
     const data = await response.json();
     return data.text || "";
   } catch (err) {
     return "";
+  } finally {
+    clearTimeout(timer);
   }
 };
 
@@ -477,7 +496,7 @@ export const runReg30Analysis = async (
 ): Promise<Reg30Report[]> => {
   const reports: Reg30Report[] = [];
   
-  const delayMs = 2200;
+  const delayMs = 800;
   for (let i = 0; i < candidates.length; i++) {
     const c = candidates[i];
     if (i > 0) await new Promise(r => setTimeout(r, delayMs));
