@@ -246,6 +246,19 @@ export const analyzeStockDeepDive = async (symbol: string): Promise<NewsAttribut
 };
 
 /**
+ * Check Breeze session health — returns session_active and session_valid flags.
+ */
+export const checkBreezeHealth = async (): Promise<{ session_active: boolean; session_valid: boolean }> => {
+  try {
+    const response = await fetch(`${getProxyBaseUrl()}/api/breeze/health`, { method: 'GET' });
+    if (!response.ok) return { session_active: false, session_valid: false };
+    return await response.json();
+  } catch {
+    return { session_active: false, session_valid: false };
+  }
+};
+
+/**
  * Set the Breeze API session
  */
 export const setBreezeSession = async (apiSession: string, adminKey: string) => {

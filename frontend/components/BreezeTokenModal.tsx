@@ -5,9 +5,10 @@ import { setBreezeSession } from '../services/apiService';
 interface BreezeTokenModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onSaved?: () => void;
 }
 
-const BreezeTokenModal: React.FC<BreezeTokenModalProps> = ({ isOpen, onClose }) => {
+const BreezeTokenModal: React.FC<BreezeTokenModalProps> = ({ isOpen, onClose, onSaved }) => {
   const [apiSession, setApiSession] = useState('');
   const [proxyKey, setProxyKey] = useState('');
   const [proxyUrl, setProxyUrl] = useState('https://maia-breeze-proxy-service-919207294606.us-central1.run.app');
@@ -38,7 +39,7 @@ const BreezeTokenModal: React.FC<BreezeTokenModalProps> = ({ isOpen, onClose }) 
       }
       setStatus('success');
       setTimeout(() => {
-        onClose();
+        (onSaved ?? onClose)();
         setStatus('idle');
         setApiSession('');
       }, 1500);

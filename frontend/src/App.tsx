@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import Navbar from '../components/Navbar';
 import MonitorTab from '../components/MonitorTab';
 import ResearchTab from '../components/ResearchTab';
@@ -9,24 +9,32 @@ import BreezeTokenModal from '../components/BreezeTokenModal';
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('monitor');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [sessionRefreshTrigger, setSessionRefreshTrigger] = useState(0);
+
+  const handleSessionSaved = useCallback(() => {
+    setIsSettingsOpen(false);
+    setSessionRefreshTrigger(n => n + 1);
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Navbar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        sessionRefreshTrigger={sessionRefreshTrigger}
       />
-      
+
       <main className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-10 py-8">
         {activeTab === 'monitor' && <MonitorTab />}
         {activeTab === 'research' && <ResearchTab />}
         {activeTab === 'reg30' && <Reg30Tab />}
       </main>
 
-      <BreezeTokenModal 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+      <BreezeTokenModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSaved={handleSessionSaved}
       />
     </div>
   );

@@ -516,10 +516,54 @@ def root_health():
     return jsonify({"status": "ok", "service": "maia-breeze-proxy"})
 
 
+_session_validity_cache: dict = {"valid": False, "checked_at": 0.0}
+_SESSION_CACHE_TTL = 180  # seconds — re-validate at most once every 3 minutes
+
+
 @app.route("/api/breeze/health", methods=["GET"])
 @cross_origin()
 def health():
-    return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
+    """
+    Returns session status.
+    session_active  — a token has been stored on the server.
+    session_valid   — the stored token was verified live against Breeze API (cached 3 min).
+    """
+    import time
+    session_set = bool(DAILY_SESSION_TOKEN)
+    session_valid = False
+
+    if session_set:
+        now = time.time()
+        cache = _session_validity_cache
+        # Use cached result if fresh enough
+        if now - cache["checked_at"] < _SESSION_CACHE_TTL:
+            session_valid = cache["valid"]
+        else:
+            # Live check: call get_customer_details — lightest authenticated endpoint
+            client = initialize_breeze()
+            if client:
+                if not client.session_key:
+                    try:
+                        client.generate_session(
+                            api_secret=get_secret("BREEZE_API_SECRET"),
+                            session_token=DAILY_SESSION_TOKEN,
+                        )
+                    except Exception:
+                        pass
+                if client.session_key:
+                    try:
+                        result = client.get_customer_details(api_session=DAILY_SESSION_TOKEN)
+                        session_valid = isinstance(result, dict) and result.get("Status") == 200
+                    except Exception:
+                        session_valid = False
+            cache["valid"] = session_valid
+            cache["checked_at"] = now
+
+    return jsonify({
+        "status": "ok",
+        "session_active": session_set,
+        "session_valid": session_valid,
+    })
 
 
 # ─────────────────────────────────────────────
@@ -553,6 +597,8 @@ def set_session():
         api_secret = get_secret("BREEZE_API_SECRET")
         client.generate_session(api_secret=api_secret, session_token=api_session)
         DAILY_SESSION_TOKEN = api_session
+        # Invalidate the health-check cache so the next poll reflects the new session
+        _session_validity_cache["checked_at"] = 0.0
         return jsonify({"status": "success", "message": "Daily session activated"}), 200
     except Exception as e:
         logger.error(f"Session Error: {e}")

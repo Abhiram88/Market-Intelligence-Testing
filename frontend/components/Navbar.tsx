@@ -1,23 +1,51 @@
-import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, BookOpen, FileText, Settings, Menu, X, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { LayoutDashboard, BookOpen, FileText, Settings, Menu, X, TrendingUp, Zap, ZapOff, Loader2 } from 'lucide-react';
 import { getMarketSessionStatus } from '../services/marketService';
+import { checkBreezeHealth } from '../services/apiService';
 
 interface NavbarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   onOpenSettings: () => void;
+  sessionRefreshTrigger?: number;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenSettings }) => {
+type SessionState = 'checking' | 'active' | 'expired' | 'inactive';
+
+const SESSION_POLL_MS = 5 * 60 * 1000; // re-check every 5 minutes
+
+const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenSettings, sessionRefreshTrigger }) => {
   const [marketStatus, setMarketStatus] = useState(getMarketSessionStatus());
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sessionState, setSessionState] = useState<SessionState>('checking');
 
+  // Market status poll
   useEffect(() => {
     const interval = setInterval(() => {
       setMarketStatus(getMarketSessionStatus());
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Session health poll
+  const refreshSession = useCallback(async () => {
+    setSessionState('checking');
+    const { session_active, session_valid } = await checkBreezeHealth();
+    if (session_valid) setSessionState('active');
+    else if (session_active) setSessionState('expired');
+    else setSessionState('inactive');
+  }, []);
+
+  useEffect(() => {
+    refreshSession();
+    const interval = setInterval(refreshSession, SESSION_POLL_MS);
+    return () => clearInterval(interval);
+  }, [refreshSession]);
+
+  // Re-check immediately when a new session is saved (triggered from parent)
+  useEffect(() => {
+    if (sessionRefreshTrigger) refreshSession();
+  }, [sessionRefreshTrigger, refreshSession]);
 
   const navItems = [
     { id: 'monitor', label: 'Monitor', icon: LayoutDashboard },
@@ -29,6 +57,13 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenSettings
     setActiveTab(id);
     setMobileOpen(false);
   };
+
+  const sessionBadge = {
+    active:   { label: 'Session Active',  dot: 'bg-emerald-500 animate-pulse', cls: 'bg-emerald-50 border-emerald-200 text-emerald-700', icon: <Zap className="w-3 h-3" /> },
+    expired:  { label: 'Session Expired', dot: 'bg-amber-500',                 cls: 'bg-amber-50 border-amber-200 text-amber-700',   icon: <ZapOff className="w-3 h-3" /> },
+    inactive: { label: 'No Session',      dot: 'bg-gray-400',                  cls: 'bg-gray-100 border-gray-200 text-gray-500',     icon: <ZapOff className="w-3 h-3" /> },
+    checking: { label: 'Checking…',       dot: 'bg-gray-300',                  cls: 'bg-gray-100 border-gray-200 text-gray-400',     icon: <Loader2 className="w-3 h-3 animate-spin" /> },
+  }[sessionState];
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-200">
@@ -76,10 +111,20 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenSettings
               {marketStatus.isOpen ? 'Market Open' : 'Market Closed'}
             </div>
 
-            {/* Settings */}
+            {/* Breeze session badge — clickable to open settings */}
             <button
               onClick={onOpenSettings}
-              className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+              title={sessionState === 'active' ? 'Breeze session is live' : 'Click to configure Breeze session'}
+              className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors hover:opacity-80 ${sessionBadge.cls}`}
+            >
+              {sessionBadge.icon}
+              {sessionBadge.label}
+            </button>
+
+            {/* Settings icon (mobile + desktop fallback) */}
+            <button
+              onClick={onOpenSettings}
+              className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors sm:hidden"
               title="Settings"
             >
               <Settings className="w-4 h-4" />
@@ -113,12 +158,21 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenSettings
               {label}
             </button>
           ))}
+          {/* Market status row */}
           <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold mt-2 ${
             marketStatus.isOpen ? 'text-emerald-700 bg-emerald-50' : 'text-gray-500 bg-gray-50'
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${marketStatus.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
             {marketStatus.isOpen ? 'Market Open' : 'Market Closed'}
           </div>
+          {/* Session status row */}
+          <button
+            onClick={() => { onOpenSettings(); setMobileOpen(false); }}
+            className={`flex w-full items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold border ${sessionBadge.cls}`}
+          >
+            {sessionBadge.icon}
+            {sessionBadge.label}
+          </button>
         </div>
       )}
     </nav>
