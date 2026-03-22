@@ -637,7 +637,9 @@ export const runReg30Analysis = async (
         };
         const cleanPayload: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(payload)) {
-          if (v !== undefined) cleanPayload[k] = v;
+          if (v === undefined) continue;
+          // PostgreSQL rejects \u0000 null bytes in text fields
+          cleanPayload[k] = typeof v === 'string' ? v.replace(/\u0000/g, '') : v;
         }
 
         const { data: report, error: upsertError } = await supabase.from('analyzed_events').upsert(cleanPayload, { onConflict: 'event_fingerprint' }).select().single();
