@@ -445,7 +445,7 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
                         {/* Bid / Ask / Spread */}
                         <div className="grid grid-cols-3 gap-3">
                           {[
-                            { label: 'Best Bid', value: metrics?.bid ? `₹${metrics.bid.toLocaleString('en-IN')}`, sub: `(${metrics?.bidQty || 0})` },
+                            { label: 'Best Bid', value: metrics?.bid ? `₹${metrics.bid.toLocaleString('en-IN')}` : '—', sub: `(${metrics?.bidQty || 0})` },
                             { label: 'Best Ask', value: metrics?.ask ? `₹${metrics.ask.toLocaleString('en-IN')}` : '—', sub: `(${metrics?.askQty || 0})` },
                           ].map(item => (
                             <div key={item.label} className="bg-white rounded-xl p-3 border border-gray-100">
