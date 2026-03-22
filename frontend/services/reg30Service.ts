@@ -86,7 +86,7 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
 /**
  * PROXY RESOLUTION
  */
-const DEFAULT_BREEZE_PROXY = "https://breeze-proxy-919207294606.us-west1.run.app";
+const DEFAULT_BREEZE_PROXY = "https://maia-breeze-proxy-service-919207294606.us-central1.run.app";
 
 const resolveBreezeUrl = (endpoint: string) => {
   const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
@@ -489,13 +489,15 @@ export const runReg30Analysis = async (
       // was inside `if (!aiResult)`, so on a cache hit symbolFromText was never
       // populated and the symbol was stored as N/A every time.
       const attachment_text = await fetchAttachmentText(c.attachment_link || "");
-      if (attachment_text.length < 100) {
+      // Fall back to raw_text (StockInsights summary_text) when attachment is unavailable (PDF/blocked)
+      const textForSearch = attachment_text.length >= 100
+        ? (cleanAttachmentText(attachment_text) || attachment_text)
+        : (c.raw_text || '');
+      const cleanedText = attachment_text.length >= 100 ? (cleanAttachmentText(attachment_text) || attachment_text) : '';
+      if (textForSearch.length < 50) {
         onRowProgress(c.id, 'FAILED');
         continue;
       }
-      // Strip XBRL metadata prefix so Gemini (and the regex below) sees actual filing content.
-      const cleanedText = cleanAttachmentText(attachment_text);
-      const textForSearch = cleanedText || attachment_text;
       // Guaranteed symbol/company from the document — used as fallback at every resolution point.
       const symbolFromText = extractNseSymbolFromText(textForSearch);
       const companyFromText = extractCompanyNameFromText(textForSearch);
@@ -844,14 +846,15 @@ export const syncNseEvents = async (
       return [];
     }
     onProgress(`Found ${rows.length} new announcement(s). Processing…`);
-    const candidates: EventCandidate[] = rows.map((r, i) => ({
+    const candidates: EventCandidate[] = rows.map((r: any, i: number) => ({
       id: s(`${r.nse_ticker}-${r.published_date}-${i}`),
       source: 'XBRL' as Reg30Source,
       event_date: r.published_date.split('T')[0],
       symbol: r.nse_ticker,
       company_name: r.company_name,
       category: 'NSE Announcement',
-      raw_text: `${r.company_name} | ${r.published_date}`,
+      // summary_text from StockInsights AI — used as fallback if PDF/attachment parse fails
+      raw_text: r.summary_text || `${r.company_name} | ${r.published_date}`,
       attachment_link: r.source_link,
       event_family: 'OTHER' as Reg30EventFamily,
       link: r.source_link,
