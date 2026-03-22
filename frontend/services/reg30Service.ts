@@ -635,6 +635,10 @@ export const runReg30Analysis = async (
           evidence_spans: Array.isArray(aiResult.evidence_spans) ? aiResult.evidence_spans : [],
           missing_fields: Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
           scoring_factors: Array.isArray(scoring.factors) ? scoring.factors : [],
+          order_type: (scoring.order_type && scoring.order_type !== 'UNKNOWN') ? scoring.order_type : (aiResult.extracted?.order_type || null),
+          market_cap_cr: aiResult.extracted?.market_cap_cr ?? null,
+          conversion_bonus: scoring.conversion_bonus || 0,
+          execution_months: scoring.final_execution_months ?? null,
           ...analysisPayload
         };
         const cleanPayload: Record<string, unknown> = {};
@@ -681,7 +685,11 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
     const ext = aiResult.extracted || {};
     const resolvedSymbol = ext.nse_symbol || ext.symbol || symbolFromText || normalizeSymbol(report.symbol);
     const resolvedCompany = ext.company_name || companyFromText || normalizeCompany(report.company_name) || 'Unknown';
-    const scoring = calculateScoreAndRecommendation(report.event_family, aiResult.extracted, aiResult.confidence, report.event_date);
+    const familyForScoring =
+      report.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
+        ? 'ORDER_CONTRACT' as Reg30EventFamily
+        : report.event_family;
+    const scoring = calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, report.event_date);
     
     let analysisPayload: any = {};
     if (scoring.impact_score >= 50) {
@@ -856,7 +864,9 @@ export const syncNseEvents = async (
       // summary_text from StockInsights AI — used as fallback if PDF/attachment parse fails
       raw_text: r.summary_text || `${r.company_name} | ${r.published_date}`,
       attachment_link: r.source_link,
-      event_family: 'OTHER' as Reg30EventFamily,
+      // StockInsights announcement_type_id='8' = Order/Contract Awards — treat as ORDER_CONTRACT from the start
+      // so scoring never falls to the default OTHER=10, even when PDF parse fails.
+      event_family: 'ORDER_CONTRACT' as Reg30EventFamily,
       link: r.source_link,
     }));
     return await runReg30Analysis(candidates, onRowProgress);
