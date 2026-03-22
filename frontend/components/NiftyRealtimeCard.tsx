@@ -16,8 +16,6 @@ export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry 
   const sign = isPositive ? '+' : '';
   const marketOpen = getMarketSessionStatus().isOpen;
 
-  const accentColor = isPositive ? 'emerald' : 'rose';
-
   const StatusBadge = () => {
     if (telemetry?.errorType === 'token') {
       return (
