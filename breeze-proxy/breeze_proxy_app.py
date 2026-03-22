@@ -1107,6 +1107,11 @@ def parse_attachment():
         return jsonify({"error": str(e), "text": ""}), 500
 
 
+# TODO: Add /api/nse/announcements endpoint that accepts { from_date: "YYYY-MM-DD" }
+# and returns { announcements: [{ company_name, nse_ticker, published_date, source_link }] }
+# by fetching from StockInsights API or NSE XBRL feed filtered to ORDER_CONTRACT events.
+# This endpoint is called by the frontend syncNseEvents() function in reg30Service.ts.
+
 @app.route('/api/gemini/reg30-analyze', methods=['POST', 'OPTIONS'])
 @cross_origin()
 def reg30_analyze():

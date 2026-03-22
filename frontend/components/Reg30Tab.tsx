@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent } from './ui/Card';
-import { 
-  Upload, 
-  ChevronDown, 
-  ChevronUp, 
-  ExternalLink, 
-  RefreshCw, 
+import {
+  Upload,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  RefreshCw,
   FileText,
   ChevronLeft,
   ChevronRight,
@@ -13,19 +13,18 @@ import {
   Trash2,
   Bookmark,
   Star,
-  X,
-  Link
 } from 'lucide-react';
-import { 
-  parseNseCsv, 
-  candidatesFromXbrlUrls,
-  runReg30Analysis, 
+import {
+  parseNseCsv,
+  runReg30Analysis,
   fetchAnalyzedEvents,
   clearReg30History,
   toggleBookmark,
   fetchBookmarkedSymbols,
   reAnalyzeSingleEvent,
-  regenerateNarrativeOnly
+  regenerateNarrativeOnly,
+  fetchLatestEventDate,
+  syncNseEvents,
 } from '../services/reg30Service';
 import { Reg30Report, EventCandidate, Reg30Source } from '../types';
 
@@ -42,16 +41,16 @@ const Reg30Tab: React.FC = () => {
   const [bookmarkedSymbols, setBookmarkedSymbols] = useState<Set<string>>(new Set());
   const [reAnalyzingId, setReAnalyzingId] = useState<string | null>(null);
   const [generatingNarrativeId, setGeneratingNarrativeId] = useState<string | null>(null);
-  const [xbrlModalOpen, setXbrlModalOpen] = useState(false);
-  const [xbrlLinksText, setXbrlLinksText] = useState('');
-  const [xbrlProcessing, setXbrlProcessing] = useState(false);
-  const [xbrlStatus, setXbrlStatus] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [lastSyncDate, setLastSyncDate] = useState<string | null>(null);
   
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     loadHistory();
     loadBookmarks();
+    fetchLatestEventDate().then(date => setLastSyncDate(date));
   }, []);
 
   const loadHistory = async () => {
@@ -107,31 +106,37 @@ const Reg30Tab: React.FC = () => {
     }
   };
 
-  const handleXbrlLinksSubmit = async () => {
-    const lines = xbrlLinksText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const linkCandidates = candidatesFromXbrlUrls(lines);
-    if (linkCandidates.length === 0) return;
-    setXbrlProcessing(true);
-    setXbrlStatus(`Processing ${linkCandidates.length} link(s)...`);
+  const handleSync = async () => {
+    const fromDate = lastSyncDate || (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 7);
+      return d.toISOString().split('T')[0];
+    })();
+    setIsSyncing(true);
+    setSyncStatus(`Starting sync from ${fromDate}…`);
     try {
-      const newReports = await runReg30Analysis(linkCandidates, (id, step) => {
-        const idx = linkCandidates.findIndex(c => c.id === id);
-        if (idx !== -1) setXbrlStatus(`Link ${idx + 1}/${linkCandidates.length}: ${step}`);
-      });
-      setReports(prev => {
-        const existingIds = new Set(prev.map(r => r.id));
-        const uniqueNew = newReports.filter(r => !existingIds.has(r.id));
-        return [...uniqueNew, ...prev];
-      });
-      setCurrentPage(1);
-      setXbrlLinksText('');
-      setXbrlModalOpen(false);
-    } catch (err) {
-      console.error("XBRL links analysis failed:", err);
-      setXbrlStatus(`Error: ${(err as Error)?.message || 'Failed'}`);
+      const newReports = await syncNseEvents(
+        fromDate,
+        (msg) => setSyncStatus(msg),
+        (_id, step) => { setSyncStatus(`Processing: ${step}`); }
+      );
+      if (newReports.length > 0) {
+        setReports(prev => {
+          const existingIds = new Set(prev.map(r => r.id));
+          const uniqueNew = newReports.filter(r => !existingIds.has(r.id));
+          return [...uniqueNew, ...prev];
+        });
+        setCurrentPage(1);
+        fetchLatestEventDate().then(date => setLastSyncDate(date));
+        setSyncStatus(`Done — ${newReports.length} new event(s) added.`);
+      } else {
+        setSyncStatus('Already up to date. No new events.');
+      }
+    } catch (e: any) {
+      setSyncStatus(`Error: ${e?.message || 'Sync failed'}`);
     } finally {
-      setXbrlProcessing(false);
-      setXbrlStatus(null);
+      setIsSyncing(false);
+      setTimeout(() => setSyncStatus(null), 5000);
     }
   };
 
@@ -254,56 +259,71 @@ const Reg30Tab: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ── Sync from NSE ───────────────────────────────── */}
         <Card className="bg-white border-slate-200 shadow-sm">
-          <CardContent className="p-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-6 uppercase tracking-tight">Daily NSE CSV Analysis</h3>
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <button
-                type="button"
-                onClick={() => setXbrlModalOpen(true)}
-                className="border-2 border-dashed border-indigo-200 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-indigo-50 transition-colors h-32"
-              >
-                <Link className="w-6 h-6 text-indigo-500 mb-2" />
-                <span className="text-[10px] font-bold text-indigo-600 uppercase text-center">Add XBRL links</span>
-                <span className="text-[9px] text-slate-400 mt-1">One URL per line</span>
-              </button>
-              {['CorpAction', 'CreditRating'].map((src) => (
-                <label key={src} className="border-2 border-dashed border-slate-200 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors h-32">
-                  <Upload className="w-6 h-6 text-slate-400 mb-2" />
-                  <span className="text-[10px] font-bold text-slate-600 uppercase text-center">Upload {src}</span>
-                  <span className="text-[9px] text-slate-400 mt-1">CSV ONLY</span>
-                  <input type="file" accept=".csv" className="hidden" onChange={(e) => handleFileUpload(e, src as Reg30Source)} />
-                </label>
-              ))}
+          <CardContent className="p-6 flex flex-col gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 uppercase tracking-tight">NSE Event Sync</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Fetches new REG 30 contract announcements from NSE and processes them through the analysis pipeline.
+              </p>
             </div>
-            <button 
-              onClick={runBatchAnalysis}
-              disabled={isProcessing || candidates.length === 0}
-              className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg uppercase tracking-wide text-sm transition-colors disabled:opacity-50 flex justify-center items-center shadow-md hover:bg-indigo-700"
+            {lastSyncDate && (
+              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+                Last event: {lastSyncDate} — sync will fetch from this date
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={handleSync}
+              disabled={isSyncing}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg uppercase tracking-wide text-sm transition-colors disabled:opacity-50 flex justify-center items-center gap-2 shadow-md"
             >
-              {isProcessing ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : null}
-              {isProcessing ? (processingStatus || 'Processing Pipeline...') : `Run CSV Analysis (${candidates.length} Pending)`}
+              {isSyncing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {isSyncing ? 'Syncing…' : 'Sync NSE Events'}
             </button>
+            {syncStatus && (
+              <p className="text-xs font-medium text-slate-500 text-center">{syncStatus}</p>
+            )}
           </CardContent>
         </Card>
 
+        {/* ── Manual CSV upload (kept as fallback) ─────────── */}
         <Card className="bg-[#0a0a12] text-white border-slate-800 shadow-xl">
-          <CardContent className="p-8 flex flex-col justify-center h-full">
-            <h3 className="text-xl font-bold mb-2 uppercase tracking-tight">Order-Pipeline Live Search</h3>
-            <p className="text-slate-400 text-sm mb-8">
-              Detect LOA, NTP, L1, and WO events from verified news and RSS channels without manual CSV imports.
-            </p>
-            <div className="relative">
-              <input 
-                type="text" 
-                placeholder="SEARCH ORDER-PIPELINE EVENTS" 
-                className="w-full bg-white text-slate-900 px-4 py-3 rounded-lg font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-center uppercase tracking-widest placeholder:text-slate-400"
-              />
+          <CardContent className="p-8 flex flex-col justify-center h-full gap-6">
+            <div>
+              <h3 className="text-xl font-bold uppercase tracking-tight">Manual CSV Upload</h3>
+              <p className="text-slate-400 text-sm mt-2">
+                Upload a Corporate Actions or Credit Rating CSV as a manual fallback.
+              </p>
             </div>
-            <div className="mt-8 flex items-center text-[10px] text-slate-500 font-mono uppercase tracking-widest">
-              <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-              Status: Sync Complete.
+            <div className="grid grid-cols-2 gap-4">
+              {(['CorpAction', 'CreditRating'] as const).map((src) => (
+                <label
+                  key={src}
+                  className="border-2 border-dashed border-slate-700 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-800 transition-colors h-28"
+                >
+                  <Upload className="w-5 h-5 text-slate-400 mb-2" />
+                  <span className="text-[10px] font-bold text-slate-300 uppercase text-center">{src}</span>
+                  <input
+                    type="file"
+                    accept=".csv"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e, src as Reg30Source)}
+                  />
+                </label>
+              ))}
             </div>
+            {candidates.length > 0 && (
+              <button
+                onClick={runBatchAnalysis}
+                disabled={isProcessing}
+                className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg uppercase tracking-wide text-sm transition-colors disabled:opacity-50 flex justify-center items-center gap-2"
+              >
+                {isProcessing ? <><RefreshCw className="w-4 h-4 animate-spin" />{processingStatus || 'Processing…'}</> : `Run CSV Analysis (${candidates.length} pending)`}
+              </button>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -570,46 +590,6 @@ const Reg30Tab: React.FC = () => {
         )}
       </div>
 
-      {/* XBRL links modal */}
-      {xbrlModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => !xbrlProcessing && setXbrlModalOpen(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col border border-slate-200" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-              <h3 className="text-lg font-bold text-slate-900 uppercase tracking-tight">Add XBRL / iXBRL links</h3>
-              <button type="button" onClick={() => !xbrlProcessing && setXbrlModalOpen(false)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-500">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 flex-1 overflow-hidden flex flex-col gap-4">
-              <p className="text-sm text-slate-600">
-                Paste one NSE iXBRL or XBRL link per line. Each link will be fetched, analyzed with Gemini for impact_score, and saved to the ledger.
-              </p>
-              <textarea
-                value={xbrlLinksText}
-                onChange={e => setXbrlLinksText(e.target.value)}
-                placeholder={`https://nsearchives.nseindia.com/corporate/ixbrl/ANN_AWARD_BAGGING_144841_05032026193733_iXBRL_WEB.html\nhttps://nsearchives.nseindia.com/corporate/...`}
-                className="w-full h-48 p-4 rounded-xl border border-slate-200 font-mono text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                disabled={xbrlProcessing}
-              />
-              {xbrlStatus && <p className="text-xs font-medium text-slate-500">{xbrlStatus}</p>}
-            </div>
-            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
-              <button type="button" onClick={() => !xbrlProcessing && setXbrlModalOpen(false)} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium text-sm">
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleXbrlLinksSubmit}
-                disabled={xbrlProcessing || !xbrlLinksText.trim()}
-                className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm uppercase tracking-wide hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
-              >
-                {xbrlProcessing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Link className="w-4 h-4" />}
-                {xbrlProcessing ? 'Processing…' : 'Process links'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

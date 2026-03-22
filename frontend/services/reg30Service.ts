@@ -228,14 +228,14 @@ const inferExecutionMonths = (eventDate: string, endDate: string | null): number
 };
 
 const calculateScoreAndRecommendation = (
-  family: Reg30EventFamily, 
-  extracted: any, 
+  family: Reg30EventFamily,
+  extracted: any,
   confidence: number,
   eventDate: string
-): { 
-  impact_score: number; 
-  direction: Sentiment; 
-  recommendation: ActionRecommendation; 
+): {
+  impact_score: number;
+  direction: Sentiment;
+  recommendation: ActionRecommendation;
   factors: string[];
   conversion_bonus: number;
   final_execution_months: number | null;
@@ -245,8 +245,10 @@ const calculateScoreAndRecommendation = (
   let direction: Sentiment = 'NEUTRAL';
   const factors: string[] = [];
   let conversion_bonus = 0;
-  let final_execution_months: number | null = extracted.execution_months || (extracted.execution_years ? extracted.execution_years * 12 : null);
-  const order_type = extracted.order_type || "UNKNOWN";
+  let final_execution_months: number | null =
+    extracted.execution_months ||
+    (extracted.execution_years ? extracted.execution_years * 12 : null);
+  const order_type = (extracted.order_type || 'UNKNOWN').toUpperCase();
 
   const addFactor = (pts: number, msg: string) => {
     impact_score += pts;
@@ -257,68 +259,108 @@ const calculateScoreAndRecommendation = (
     case 'ORDER_CONTRACT':
     case 'ORDER_PIPELINE': {
       direction = 'POSITIVE';
-      addFactor(family === 'ORDER_CONTRACT' ? 20 : 15, `Base weight for ${family.replace('_', ' ')}`);
-      
+      addFactor(
+        family === 'ORDER_CONTRACT' ? 20 : 15,
+        `Base weight for ${family.replace('_', ' ')}`
+      );
+
       const orderCr = extracted.order_value_cr;
       const marketCapCr = extracted.market_cap_cr;
       if (orderCr != null && orderCr > 0) {
         if (marketCapCr != null && marketCapCr > 0) {
           const ratio = orderCr / marketCapCr;
-          const ratioBonus = ratio >= 0.15 ? 25 : ratio >= 0.08 ? 18 : ratio >= 0.03 ? 12 : ratio >= 0.01 ? 6 : 2;
+          const ratioBonus =
+            ratio >= 0.15 ? 25 :
+            ratio >= 0.08 ? 18 :
+            ratio >= 0.03 ? 12 :
+            ratio >= 0.01 ? 6 : 2;
           addFactor(ratioBonus, `Order vs market cap ${(ratio * 100).toFixed(2)}% (₹${orderCr} Cr / ₹${marketCapCr} Cr)`);
         } else {
-          const absoluteBonus = orderCr >= 1000 ? 30 : orderCr >= 500 ? 20 : orderCr >= 100 ? 10 : 5;
+          const absoluteBonus =
+            orderCr >= 1000 ? 30 :
+            orderCr >= 500  ? 20 :
+            orderCr >= 100  ? 10 : 5;
           addFactor(absoluteBonus, `Value bonus (₹${orderCr} Cr)`);
         }
       } else {
-        addFactor(-10, "Order value missing");
+        addFactor(-10, 'Order value missing');
       }
-      
-      const stageBonus = extracted.stage === 'LOA' ? 20 : extracted.stage === 'WO' ? 18 : extracted.stage === 'NTP' ? 15 : extracted.stage === 'L1' ? 12 : 5;
-      addFactor(stageBonus, `Stage: ${extracted.stage || 'General'}`);
 
-      if (!final_execution_months && extracted.end_date) {
+      // FIX: WO → 20 (was 18), NTP → 18 (was 15); WO can now reach ACTIONABLE_BULLISH (max 75)
+      const stageBonus: Record<string, number> = { LOA: 20, WO: 20, NTP: 18, L1: 12 };
+      addFactor(
+        stageBonus[extracted.stage] ?? 5,
+        `Stage: ${extracted.stage || 'General'}`
+      );
+
+      // Resolve execution months — prefer construction_period_months for HAM contracts
+      const contractMode = (extracted.contract_mode || '').toUpperCase();
+      if (contractMode === 'HAM') {
+        final_execution_months =
+          extracted.construction_period_months || extracted.execution_months || null;
+      }
+      if (final_execution_months === null) {
+        final_execution_months =
+          extracted.execution_months ||
+          (extracted.execution_years ? extracted.execution_years * 12 : null);
+      }
+      if (final_execution_months === null && extracted.end_date) {
         final_execution_months = inferExecutionMonths(eventDate, extracted.end_date);
       }
 
       if (final_execution_months !== null) {
-        if (final_execution_months <= 6) conversion_bonus = 10;
-        else if (final_execution_months <= 12) conversion_bonus = 6;
-        else if (final_execution_months <= 24) conversion_bonus = 2;
-        else conversion_bonus = 0;
+        const em = Math.floor(final_execution_months);
+        conversion_bonus =
+          em <= 6  ? 10 :
+          em <= 12 ? 6  :
+          em <= 24 ? 2  : 0;
+        // FIX: type adjustment only fires when execution duration is known
+        if (order_type === 'SUPPLY')    conversion_bonus += 2;
+        else if (order_type === 'SERVICES') conversion_bonus += 1;
+        conversion_bonus = Math.min(conversion_bonus, 10);
+        if (conversion_bonus > 0) {
+          addFactor(conversion_bonus, `Conversion bonus (~${em}m, ${order_type})`);
+        }
       }
 
-      if (order_type === 'SUPPLY') conversion_bonus += 2;
-      else if (order_type === 'SERVICES') conversion_bonus += 1;
-
-      conversion_bonus = Math.min(conversion_bonus, 10);
-
-      if (conversion_bonus > 0) {
-        addFactor(conversion_bonus, `Conversion bonus (execution ~${final_execution_months || 'N/A'} months, type: ${order_type})`);
+      // Subsidiary discount
+      if (extracted.is_subsidiary_win) {
+        addFactor(-8, `Subsidiary win (${extracted.subsidiary_name || 'WOS'})`);
       }
       break;
     }
     case 'CREDIT_RATING': {
-      const sub = lower(extracted.rating_action || "");
-      const isUpgrade = sub.includes('upgrade');
-      const isDowngrade = sub.includes('downgrade');
+      const action = (extracted.rating_action || '').toLowerCase();
+      const isUpgrade = action.includes('upgrade');
+      const isDowngrade = action.includes('downgrade');
       direction = isUpgrade ? 'POSITIVE' : (isDowngrade ? 'NEGATIVE' : 'NEUTRAL');
-      addFactor(isUpgrade ? 40 : (isDowngrade ? 50 : 10), `Rating: ${extracted.rating_action || 'Review'}`);
+      addFactor(
+        isUpgrade ? 40 : (isDowngrade ? 50 : 10),
+        `Rating: ${extracted.rating_action || 'Review'}`
+      );
       break;
     }
     case 'LITIGATION_REGULATORY':
       direction = 'NEGATIVE';
-      addFactor(40, "Litigation risk");
+      addFactor(40, 'Litigation risk');
       break;
     default:
       addFactor(10, `Standard event: ${family}`);
   }
 
   impact_score = Math.min(Math.max(impact_score, 0), 100);
+
+  // FIX: validation issues + low confidence → NEEDS_MANUAL_REVIEW
+  const hasValidationIssues = Array.isArray(extracted?._validation_issues) &&
+    extracted._validation_issues.length > 0;
   let recommendation: ActionRecommendation = 'TRACK';
-  if (confidence < 0.65) recommendation = 'NEEDS_MANUAL_REVIEW';
-  else if (impact_score >= 75) recommendation = direction === 'POSITIVE' ? 'ACTIONABLE_BULLISH' : 'ACTIONABLE_BEARISH_RISK';
-  else if (impact_score >= 55) recommendation = 'HIGH_PRIORITY_WATCH';
+  if ((hasValidationIssues && confidence < 0.7) || confidence < 0.65) {
+    recommendation = 'NEEDS_MANUAL_REVIEW';
+  } else if (impact_score >= 75) {
+    recommendation = direction === 'POSITIVE' ? 'ACTIONABLE_BULLISH' : 'ACTIONABLE_BEARISH_RISK';
+  } else if (impact_score >= 55) {
+    recommendation = 'HIGH_PRIORITY_WATCH';
+  }
 
   return { impact_score, direction, recommendation, factors, conversion_bonus, final_execution_months, order_type };
 };
@@ -404,6 +446,8 @@ const mapDbRowToReport = (item: any): Reg30Report => ({
   scoring_factors: item.scoring_factors || [],
   raw_text: item.summary || '',
   order_value_cr: item.extracted_json?.order_value_cr || 0,
+  market_cap_cr: item.market_cap_cr || null,
+  order_type: item.order_type || item.extracted_json?.order_type || null,
   event_analysis_text: item.event_analysis_text || '',
   institutional_risk: item.institutional_risk || 'LOW',
   policy_bias: item.policy_bias || 'NEUTRAL',
@@ -751,6 +795,70 @@ export const fetchBookmarkedSymbols = async (): Promise<{symbol: string, company
 
 export const removeBookmark = async (symbol: string) => {
   await supabase.from('priority_stocks').delete().eq('symbol', symbol);
+};
+
+/** Returns the most recent event_date stored in analyzed_events, or null if empty. */
+export const fetchLatestEventDate = async (): Promise<string | null> => {
+  try {
+    const { data, error } = await supabase
+      .from('analyzed_events')
+      .select('event_date')
+      .order('event_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data.event_date as string;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Fetches new NSE Reg30 announcements from the proxy (StockInsights API)
+ * since `fromDate` (YYYY-MM-DD) and runs them through the analysis pipeline.
+ * Emits progress via `onProgress(message)`.
+ */
+export const syncNseEvents = async (
+  fromDate: string,
+  onProgress: (msg: string) => void,
+  onRowProgress: (id: string, step: 'FETCHING' | 'AI_ANALYZING' | 'SAVING' | 'COMPLETED' | 'FAILED') => void
+): Promise<Reg30Report[]> => {
+  onProgress(`Fetching NSE announcements since ${fromDate}…`);
+  try {
+    const res = await fetch(resolveBreezeUrl('/api/nse/announcements'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from_date: fromDate }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || `Proxy returned ${res.status}`);
+    }
+    const data = await res.json();
+    const rows: Array<{ company_name: string; nse_ticker: string; published_date: string; source_link: string }> =
+      data.announcements || [];
+    if (rows.length === 0) {
+      onProgress('No new announcements found.');
+      return [];
+    }
+    onProgress(`Found ${rows.length} new announcement(s). Processing…`);
+    const candidates: EventCandidate[] = rows.map((r, i) => ({
+      id: s(`${r.nse_ticker}-${r.published_date}-${i}`),
+      source: 'XBRL' as Reg30Source,
+      event_date: r.published_date.split('T')[0],
+      symbol: r.nse_ticker,
+      company_name: r.company_name,
+      category: 'NSE Announcement',
+      raw_text: `${r.company_name} | ${r.published_date}`,
+      attachment_link: r.source_link,
+      event_family: 'OTHER' as Reg30EventFamily,
+      link: r.source_link,
+    }));
+    return await runReg30Analysis(candidates, onRowProgress);
+  } catch (e: any) {
+    onProgress(`Sync failed: ${e?.message || 'Unknown error'}`);
+    return [];
+  }
 };
 
 export const clearReg30History = async () => {

@@ -92,6 +92,7 @@ export interface Reg30Report {
   scoring_factors?: string[];
   raw_text?: string;
   order_value_cr?: number;
+  market_cap_cr?: number | null;
   event_analysis_text?: string;
   institutional_risk?: 'LOW' | 'MED' | 'HIGH';
   policy_bias?: 'TAILWIND' | 'HEADWIND' | 'NEUTRAL';
