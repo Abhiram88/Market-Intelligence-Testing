@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Key, ShieldCheck, Server, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { X, Key, Server, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { setBreezeSession } from '../services/apiService';
 
 interface BreezeTokenModalProps {

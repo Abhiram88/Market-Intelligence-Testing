@@ -1,6 +1,6 @@
 import React from 'react';
 import { MarketTelemetry, getMarketSessionStatus } from '../services/marketService';
-import { TrendingUp, TrendingDown, Activity, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, AlertTriangle, WifiOff } from 'lucide-react';
 
 interface NiftyRealtimeCardProps {
   telemetry: MarketTelemetry | null;
