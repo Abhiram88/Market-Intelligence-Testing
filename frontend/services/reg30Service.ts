@@ -45,22 +45,27 @@ async function analyzeEventNarrativeViaProxy(inputs: {
   }
 }
 
-/** Call proxy to run Reg30 Gemini analysis (no API key needed in frontend). */
+/** Call proxy to run Reg30 Gemini analysis (no API key needed in frontend).
+ *  Proxy now handles PDF fetching, extraction, validation, and scoring server-side
+ *  (ported from Bulk_reg30_processor.py). Frontend just sends the PDF URL + metadata. */
 async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg30Analysis | null> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 90000); // Gemini 2.5-pro can take up to 90s
+  const timer = setTimeout(() => ctrl.abort(), 90000);
   try {
     const res = await fetch(resolveBreezeUrl('/api/gemini/reg30-analyze'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         candidate: {
-          company_name: candidate.company_name,
-          symbol: candidate.symbol,
-          source: candidate.source,
-          raw_text: candidate.raw_text,
+          company_name:    candidate.company_name,
+          symbol:          candidate.symbol,
+          source:          candidate.source,
+          raw_text:        candidate.raw_text,        // StockInsights summary — fallback if PDF fails
+          attachment_link: candidate.attachment_link, // proxy fetches PDF bytes directly
+          source_link:     candidate.link,
+          event_date:      candidate.event_date,
+          published_date:  candidate.event_date,
         },
-        attachment_text: candidate.attachment_text || '',
       }),
       signal: ctrl.signal,
     });
@@ -70,21 +75,30 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
     }
     const data = await res.json();
     if (!data || typeof data.summary !== 'string') return null;
-    // Proxy returns extraction-only schema (summary, direction_hint, confidence, extracted, evidence_spans, missing_fields).
-    // Impact and recommendation are computed by calculateScoreAndRecommendation in the pipeline.
     const extracted = data.extracted && typeof data.extracted === 'object' ? data.extracted : {};
-    const mergedExtracted = { ...extracted };
-    if (data.symbol && !mergedExtracted.nse_symbol && !mergedExtracted.symbol) mergedExtracted.nse_symbol = data.symbol;
-    if (data.company_name && !mergedExtracted.company_name) mergedExtracted.company_name = data.company_name;
     return {
-      summary: data.summary,
-      impact_score: typeof data.impact_score === 'number' ? data.impact_score : 0,
-      recommendation: (data.recommendation as Reg30Analysis['recommendation']) || 'TRACK',
-      confidence: typeof data.confidence === 'number' ? data.confidence : 0,
+      summary:       data.summary,
+      // Proxy returns full scoring when _proxy_scored=true
+      impact_score:  typeof data.impact_score === 'number' ? data.impact_score : 0,
+      recommendation: (data.action_recommendation || data.recommendation || 'TRACK') as Reg30Analysis['recommendation'],
+      confidence:    typeof data.confidence === 'number' ? data.confidence : 0,
       missing_fields: Array.isArray(data.missing_fields) ? data.missing_fields : [],
       evidence_spans: Array.isArray(data.evidence_spans) ? data.evidence_spans : [],
-      extracted: mergedExtracted,
-    } as Reg30Analysis;
+      extracted,
+      // Extra proxy-computed fields used directly in the pipeline
+      _proxy_scored:         data._proxy_scored === true,
+      _event_family:         data.event_family,
+      _direction:            data.direction,
+      _scoring_factors:      data.scoring_factors,
+      _conversion_bonus:     data.conversion_bonus,
+      _execution_months:     data.execution_months,
+      _order_type:           data.order_type,
+      _event_date:           data.event_date,
+      _event_datetime:       data.event_datetime,
+      _validation_issues:    data._validation_issues,
+      _resolved_symbol:      data.symbol,
+      _resolved_company:     data.company_name,
+    } as Reg30Analysis & Record<string, any>;
   } catch (e) {
     console.error('Reg30 proxy analysis failed:', e);
     return null;
@@ -501,54 +515,20 @@ export const runReg30Analysis = async (
     const c = candidates[i];
     if (i > 0) await new Promise(r => setTimeout(r, delayMs));
     try {
-      onRowProgress(c.id, 'FETCHING');
+      onRowProgress(c.id, 'AI_ANALYZING');
 
-      // Always fetch and parse the attachment first — symbol/company extraction must
-      // happen regardless of whether a cached AI result exists. Previously this block
-      // was inside `if (!aiResult)`, so on a cache hit symbolFromText was never
-      // populated and the symbol was stored as N/A every time.
-      const attachment_text = await fetchAttachmentText(c.attachment_link || "");
-      // Fall back to raw_text (StockInsights summary_text) when attachment is unavailable (PDF/blocked)
-      const textForSearch = attachment_text.length >= 100
-        ? (cleanAttachmentText(attachment_text) || attachment_text)
-        : (c.raw_text || '');
-      const cleanedText = attachment_text.length >= 100 ? (cleanAttachmentText(attachment_text) || attachment_text) : '';
-      if (textForSearch.length < 50) {
-        onRowProgress(c.id, 'FAILED');
-        continue;
-      }
-      // Guaranteed symbol/company from the document — used as fallback at every resolution point.
-      const symbolFromText = extractNseSymbolFromText(textForSearch);
-      const companyFromText = extractCompanyNameFromText(textForSearch);
-      // Extract the real event date from the document ("Date of occurrence of event*").
-      let resolvedEventDate = c.event_date;
-      const EVENT_DATE_RE = /Date\s+of\s+(?:occurrence\s+of\s+(?:the\s+)?)?event\s*\*?\s*[\s|:]+([0-9]{1,2}[-\/][0-9]{1,2}[-\/][0-9]{2,4}|[0-9]{4}[-\/][0-9]{1,2}[-\/][0-9]{1,2})/i;
-      const dtm = textForSearch.match(EVENT_DATE_RE);
-      if (dtm) {
-        const parsed = normalizeDate(dtm[1]);
-        if (parsed && !parsed.startsWith('NaN')) resolvedEventDate = parsed;
-      }
-
-      // Check the Gemini cache — only skip the AI call, never skip text extraction.
-      const cacheKey = getStringHash(`${c.event_family}|${c.company_name}|${c.attachment_link || c.id}`);
-      let aiResult = null;
+      // Proxy now handles PDF fetching + Gemini extraction + validation + scoring server-side.
+      // We just send the candidate with attachment_link; no local fetchAttachmentText needed.
+      const cacheKey = getStringHash(`v4|${c.company_name}|${c.attachment_link || c.id}`);
+      let aiResult: any = null;
       try {
         const { data: cached } = await supabase.from('gemini_cache').select('response_json').eq('cache_key', cacheKey).maybeSingle();
         aiResult = cached?.response_json;
       } catch (e) {}
 
       if (!aiResult) {
-        // Enrich the candidate with frontend-extracted values so the proxy prompt and
-        // its own regex fallback also benefit from them.
-        const enrichedCandidate = {
-          ...c,
-          symbol: normalizeSymbol(c.symbol) || symbolFromText || null,
-          company_name: normalizeCompany(c.company_name) || companyFromText || 'Unknown',
-          attachment_text: textForSearch,
-        };
-        onRowProgress(c.id, 'AI_ANALYZING');
         try {
-          aiResult = await analyzeReg30EventViaProxy(enrichedCandidate) ?? await analyzeReg30Event(enrichedCandidate);
+          aiResult = await analyzeReg30EventViaProxy(c);
         } catch (_) {
           aiResult = null;
         }
@@ -562,103 +542,90 @@ export const runReg30Analysis = async (
       if (aiResult) {
         onRowProgress(c.id, 'SAVING');
         const ext = aiResult.extracted || {};
-        // Use || (not ??) throughout: proxy may return empty strings for symbol/company.
-        // Apply normalizeCompany/normalizeSymbol so AI-returned sentinel values ('Unknown', 'N/A')
-        // are treated as absent — same as empty string — allowing companyFromText fallback.
-        // symbolFromText / companyFromText are from the full attachment text — reliable
-        // even when Gemini or the proxy regex only saw a truncated/metadata-heavy window.
-        const resolvedSymbol = ext.nse_symbol || ext.symbol || symbolFromText || normalizeSymbol(c.symbol);
-        const resolvedCompany = normalizeCompany(ext.company_name) || companyFromText || normalizeCompany(c.company_name) || 'Unknown';
-        const familyForScoring =
-          c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
-            ? 'ORDER_CONTRACT'
-            : c.event_family!;
-        const scoring = calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, resolvedEventDate);
-        
+
+        // Use proxy-resolved symbol/company/date when available (_proxy_scored=true)
+        const resolvedSymbol  = (aiResult._resolved_symbol  || ext.nse_symbol || ext.symbol || normalizeSymbol(c.symbol) || '').toUpperCase();
+        const resolvedCompany = normalizeCompany(aiResult._resolved_company || ext.company_name || c.company_name) || 'Unknown';
+        const resolvedEventDate = aiResult._event_date || c.event_date;
+
+        // Use proxy scoring if available; fall back to local calculateScoreAndRecommendation
+        const familyForScoring = (aiResult._event_family || (
+          c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA','WO','NTP','L1'].includes(ext.stage || ''))
+            ? 'ORDER_CONTRACT' : c.event_family
+        )) as Reg30EventFamily;
+
+        const scoring = aiResult._proxy_scored ? {
+          impact_score:       aiResult.impact_score || 0,
+          direction:          aiResult._direction   || 'NEUTRAL',
+          recommendation:     aiResult.recommendation as ActionRecommendation || 'TRACK',
+          factors:            aiResult._scoring_factors || [],
+          conversion_bonus:   aiResult._conversion_bonus || 0,
+          final_execution_months: aiResult._execution_months ?? null,
+          order_type:         aiResult._order_type || null,
+        } : calculateScoreAndRecommendation(familyForScoring, ext, aiResult.confidence, resolvedEventDate);
+
         let analysisPayload: any = {};
         if (scoring.impact_score >= 50) {
           const det = getDeterministicAnalysis({
-            event_date: resolvedEventDate,
-            summary: aiResult.summary,
-            impact_score: scoring.impact_score,
-            extracted_data: aiResult.extracted
+            event_date:     resolvedEventDate,
+            summary:        aiResult.summary,
+            impact_score:   scoring.impact_score,
+            extracted_data: ext,
           });
-          
           const narrativeCacheKey = getStringHash(`narrative_v3|${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${det.tactical_plan}|${c.attachment_link || c.id}`);
-          let narrativeData = null;
+          let narrativeData: any = null;
           try {
-            const { data: narrativeCached } = await supabase.from('gemini_cache').select('response_json').eq('cache_key', narrativeCacheKey).maybeSingle();
-            narrativeData = narrativeCached?.response_json;
+            const { data: nc } = await supabase.from('gemini_cache').select('response_json').eq('cache_key', narrativeCacheKey).maybeSingle();
+            narrativeData = nc?.response_json;
           } catch (e) {}
-          
           if (!narrativeData) {
             narrativeData = await analyzeEventNarrativeViaProxy({
-              symbol: resolvedSymbol,
-              company_name: resolvedCompany,
-              event_family: familyForScoring,
-              stage: aiResult.extracted?.stage,
-              order_value_cr: aiResult.extracted?.order_value_cr,
-              customer: aiResult.extracted?.customer,
-              summary: aiResult.summary,
-              impact_score: scoring.impact_score,
-              institutional_risk: det.institutional_risk,
-              policy_bias: det.policy_bias,
-              tactical_plan: det.tactical_plan,
-              trigger_text: det.trigger_text
-            }) ?? await analyzeEventNarrative({
-              symbol: resolvedSymbol,
-              event_family: c.event_family,
-              stage: aiResult.extracted.stage,
-              order_value_cr: aiResult.extracted.order_value_cr,
-              customer: aiResult.extracted.customer,
-              ...det
+              symbol: resolvedSymbol, company_name: resolvedCompany,
+              event_family: familyForScoring, stage: ext.stage,
+              order_value_cr: ext.order_value_cr, customer: ext.customer,
+              summary: aiResult.summary, impact_score: scoring.impact_score,
+              institutional_risk: det.institutional_risk, policy_bias: det.policy_bias,
+              tactical_plan: det.tactical_plan, trigger_text: det.trigger_text,
             });
             if (narrativeData) {
-              try {
-                await supabase.from('gemini_cache').upsert({ cache_key: narrativeCacheKey, response_json: narrativeData });
-              } catch (e) {}
+              try { await supabase.from('gemini_cache').upsert({ cache_key: narrativeCacheKey, response_json: narrativeData }); } catch (e) {}
             }
           }
-          
           analysisPayload = {
-            event_analysis_text: narrativeData?.event_analysis_text || "Tactical overview generated successfully.",
+            event_analysis_text: narrativeData?.event_analysis_text || '',
             analysis_updated_at: new Date().toISOString(),
-            institutional_risk: det.institutional_risk,
-            policy_bias: det.policy_bias,
-            policy_event: det.policy_event,
-            tactical_plan: det.tactical_plan,
-            trigger_text: det.trigger_text
+            institutional_risk: det.institutional_risk, policy_bias: det.policy_bias,
+            policy_event: det.policy_event, tactical_plan: det.tactical_plan,
+            trigger_text: det.trigger_text,
           };
         }
 
         const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${aiResult.summary.substring(0, 30)}|${c.id}`);
-        const attachmentTextStored = cleanedText || attachment_text || "Content from Cache";
         // Only include columns that exist on analyzed_events to avoid Supabase 400 (PGRST102)
         const payload: Record<string, unknown> = {
-          event_date: resolvedEventDate || null,
-          symbol: String(resolvedSymbol ?? ''),
-          company_name: String(resolvedCompany ?? 'Unknown'),
-          source: c.source || 'XBRL',
-          event_family: familyForScoring,
-          summary: String(aiResult.summary || ''),
-          impact_score: Number(scoring.impact_score) || 0,
+          event_date:            resolvedEventDate || null,
+          symbol:                String(resolvedSymbol ?? ''),
+          company_name:          String(resolvedCompany ?? 'Unknown'),
+          source:                c.source || 'XBRL',
+          event_family:          familyForScoring,
+          summary:               String(aiResult.summary || ''),
+          impact_score:          Number(scoring.impact_score) || 0,
           action_recommendation: scoring.recommendation || 'TRACK',
-          extracted_json: aiResult.extracted && typeof aiResult.extracted === 'object' ? aiResult.extracted : {},
-          attachment_link: c.attachment_link ?? null,
-          attachment_text: typeof attachmentTextStored === 'string' ? attachmentTextStored.substring(0, 500000) : '',
-          event_fingerprint: fingerprint,
-          confidence: Number(aiResult.confidence) || 0,
-          direction: scoring.direction || 'NEUTRAL',
-          source_link: c.link ?? null,
-          stage: (aiResult.extracted && aiResult.extracted.stage) ?? null,
-          evidence_spans: Array.isArray(aiResult.evidence_spans) ? aiResult.evidence_spans : [],
-          missing_fields: Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
-          scoring_factors: Array.isArray(scoring.factors) ? scoring.factors : [],
-          order_type: (scoring.order_type && scoring.order_type !== 'UNKNOWN') ? scoring.order_type : (aiResult.extracted?.order_type || null),
-          market_cap_cr: aiResult.extracted?.market_cap_cr ?? null,
-          conversion_bonus: scoring.conversion_bonus || 0,
-          execution_months: scoring.final_execution_months ?? null,
-          ...analysisPayload
+          extracted_json:        typeof ext === 'object' ? ext : {},
+          attachment_link:       c.attachment_link ?? null,
+          source_link:           c.link ?? null,
+          event_fingerprint:     fingerprint,
+          confidence:            Number(aiResult.confidence) || 0,
+          direction:             scoring.direction || 'NEUTRAL',
+          stage:                 ext.stage ?? null,
+          evidence_spans:        Array.isArray(aiResult.evidence_spans) ? aiResult.evidence_spans : [],
+          missing_fields:        Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
+          scoring_factors:       Array.isArray(scoring.factors) ? scoring.factors : [],
+          order_type:            (scoring.order_type && scoring.order_type !== 'UNKNOWN') ? scoring.order_type : (ext.order_type || null),
+          market_cap_cr:         ext.market_cap_cr ?? null,
+          conversion_bonus:      scoring.conversion_bonus || 0,
+          execution_months:      scoring.final_execution_months ?? null,
+          ...analysisPayload,
         };
         const cleanPayload: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(payload)) {
@@ -686,29 +653,34 @@ export const runReg30Analysis = async (
 };
 
 export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Report | null> => {
-  const attachment_text = await fetchAttachmentText(report.attachment_link || "");
-  // Strip XBRL metadata prefix and extract symbol/company as fallbacks.
-  const cleanedText = cleanAttachmentText(attachment_text);
-  const symbolFromText = extractNseSymbolFromText(cleanedText || attachment_text);
-  const companyFromText = extractCompanyNameFromText(cleanedText || attachment_text);
   const candidate: EventCandidate = {
     id: report.id, source: report.source, event_date: report.event_date,
-    symbol: normalizeSymbol(report.symbol) || symbolFromText || null,
-    company_name: normalizeCompany(report.company_name) || companyFromText || 'Unknown',
+    symbol: normalizeSymbol(report.symbol) || null,
+    company_name: normalizeCompany(report.company_name) || 'Unknown',
     category: report.event_family,
-    raw_text: report.summary, attachment_text: cleanedText || attachment_text, link: report.link,
-    attachment_link: report.attachment_link, event_family: report.event_family
+    raw_text: report.summary,
+    link: report.link,
+    attachment_link: report.attachment_link,
+    event_family: report.event_family,
   };
-  const aiResult = await analyzeReg30EventViaProxy(candidate) ?? await analyzeReg30Event(candidate);
+  const aiResult: any = await analyzeReg30EventViaProxy(candidate);
   if (aiResult) {
     const ext = aiResult.extracted || {};
-    const resolvedSymbol = ext.nse_symbol || ext.symbol || symbolFromText || normalizeSymbol(report.symbol);
-    const resolvedCompany = ext.company_name || companyFromText || normalizeCompany(report.company_name) || 'Unknown';
-    const familyForScoring =
-      report.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
-        ? 'ORDER_CONTRACT' as Reg30EventFamily
-        : report.event_family;
-    const scoring = calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, report.event_date);
+    const resolvedSymbol  = (aiResult._resolved_symbol  || ext.nse_symbol || ext.symbol || normalizeSymbol(report.symbol) || '').toUpperCase();
+    const resolvedCompany = normalizeCompany(aiResult._resolved_company || ext.company_name || report.company_name) || 'Unknown';
+    const familyForScoring = (aiResult._event_family || (
+      report.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA','WO','NTP','L1'].includes(ext.stage || ''))
+        ? 'ORDER_CONTRACT' : report.event_family
+    )) as Reg30EventFamily;
+    const scoring = aiResult._proxy_scored ? {
+      impact_score:       aiResult.impact_score || 0,
+      direction:          aiResult._direction || 'NEUTRAL',
+      recommendation:     (aiResult.recommendation || 'TRACK') as ActionRecommendation,
+      factors:            aiResult._scoring_factors || [],
+      conversion_bonus:   aiResult._conversion_bonus || 0,
+      final_execution_months: aiResult._execution_months ?? null,
+      order_type:         aiResult._order_type || null,
+    } : calculateScoreAndRecommendation(familyForScoring, ext, aiResult.confidence, report.event_date);
     
     let analysisPayload: any = {};
     if (scoring.impact_score >= 50) {
