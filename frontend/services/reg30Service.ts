@@ -60,8 +60,9 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
           company_name:    candidate.company_name,
           symbol:          candidate.symbol,
           source:          candidate.source,
-          raw_text:        candidate.raw_text,        // StockInsights summary — fallback if PDF fails
-          attachment_link: candidate.attachment_link, // proxy fetches PDF bytes directly
+          raw_text:        candidate.raw_text,          // StockInsights summary — fallback
+          attachment_text: candidate.attachment_text,  // pre-extracted clean text (preferred)
+          attachment_link: candidate.attachment_link,  // proxy fetches PDF bytes directly
           source_link:     candidate.link,
           event_date:      candidate.event_date,
           published_date:  candidate.event_date,
