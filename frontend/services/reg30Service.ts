@@ -98,6 +98,9 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
       _validation_issues:    data._validation_issues,
       _resolved_symbol:      data.symbol,
       _resolved_company:     data.company_name,
+      _market_cap_cr:        typeof data.market_cap_cr === 'number' ? data.market_cap_cr : null,
+      _pat_cr:               typeof data.pat_cr === 'number' ? data.pat_cr : null,
+      _networth_cr:          typeof data.networth_cr === 'number' ? data.networth_cr : null,
     } as Reg30Analysis & Record<string, any>;
   } catch (e) {
     console.error('Reg30 proxy analysis failed:', e);
@@ -557,7 +560,7 @@ export const runReg30Analysis = async (
         const scoring = aiResult._proxy_scored ? {
           impact_score:       aiResult.impact_score || 0,
           direction:          aiResult._direction   || 'NEUTRAL',
-          recommendation:     aiResult.recommendation as ActionRecommendation || 'TRACK',
+          recommendation:     (aiResult.action_recommendation || aiResult.recommendation || 'TRACK') as ActionRecommendation,
           factors:            aiResult._scoring_factors || [],
           conversion_bonus:   aiResult._conversion_bonus || 0,
           final_execution_months: aiResult._execution_months ?? null,
@@ -604,6 +607,7 @@ export const runReg30Analysis = async (
         // Only include columns that exist on analyzed_events to avoid Supabase 400 (PGRST102)
         const payload: Record<string, unknown> = {
           event_date:            resolvedEventDate || null,
+          event_datetime:        aiResult._event_datetime || null,
           symbol:                String(resolvedSymbol ?? ''),
           company_name:          String(resolvedCompany ?? 'Unknown'),
           source:                c.source || 'XBRL',
@@ -622,7 +626,9 @@ export const runReg30Analysis = async (
           missing_fields:        Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
           scoring_factors:       Array.isArray(scoring.factors) ? scoring.factors : [],
           order_type:            (scoring.order_type && scoring.order_type !== 'UNKNOWN') ? scoring.order_type : (ext.order_type || null),
-          market_cap_cr:         ext.market_cap_cr ?? null,
+          market_cap_cr:         aiResult._market_cap_cr ?? ext.market_cap_cr ?? null,
+          pat_cr:                aiResult._pat_cr ?? null,
+          networth_cr:           aiResult._networth_cr ?? ext.networth_cr ?? null,
           conversion_bonus:      scoring.conversion_bonus || 0,
           execution_months:      scoring.final_execution_months ?? null,
           ...analysisPayload,
@@ -675,7 +681,7 @@ export const reAnalyzeSingleEvent = async (report: Reg30Report): Promise<Reg30Re
     const scoring = aiResult._proxy_scored ? {
       impact_score:       aiResult.impact_score || 0,
       direction:          aiResult._direction || 'NEUTRAL',
-      recommendation:     (aiResult.recommendation || 'TRACK') as ActionRecommendation,
+      recommendation:     (aiResult.action_recommendation || aiResult.recommendation || 'TRACK') as ActionRecommendation,
       factors:            aiResult._scoring_factors || [],
       conversion_bonus:   aiResult._conversion_bonus || 0,
       final_execution_months: aiResult._execution_months ?? null,
