@@ -165,98 +165,138 @@ const MonitorTab: React.FC = () => {
       </div>
 
       {/* Unified Intelligence Container */}
-      <Card className="rounded-[2.5rem] border-slate-200 shadow-2xl overflow-hidden bg-white min-h-[500px] flex flex-col">
-        <div className="px-8 py-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <div className="flex bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
-            <button onClick={() => setActiveIntelTab('radar')} className={`px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeIntelTab === 'radar' ? 'bg-white text-indigo-600 shadow-sm border border-slate-100' : 'text-slate-400 hover:text-slate-600'}`}>Market Radar</button>
-            <button onClick={() => setActiveIntelTab('deepdive')} className={`px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeIntelTab === 'deepdive' ? 'bg-white text-indigo-600 shadow-sm border border-slate-100' : 'text-slate-400 hover:text-slate-600'}`}>Equity Deep Dive</button>
+      <Card className="rounded-2xl border-gray-200 shadow-sm overflow-hidden bg-white min-h-[400px] flex flex-col">
+        <div className="px-6 py-4 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-3">
+          <div className="flex bg-gray-100 p-1 rounded-xl">
+            <button onClick={() => setActiveIntelTab('radar')} className={`px-5 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeIntelTab === 'radar' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Market Radar</button>
+            <button onClick={() => setActiveIntelTab('deepdive')} className={`px-5 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeIntelTab === 'deepdive' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Equity Deep Dive</button>
           </div>
-          <div className="flex items-center gap-4">
-            {activeIntelTab === 'deepdive' && <input type="text" placeholder="SYMBOL" value={stockSymbol} onChange={(e) => setStockSymbol(e.target.value.toUpperCase())} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-indigo-500 w-40" />}
-            <button onClick={activeIntelTab === 'radar' ? handleMarketAnalysis : handleStockAnalysis} disabled={isAnalyzingMarket || isAnalyzingStock || (activeIntelTab === 'deepdive' && !stockSymbol)} className="px-8 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-lg shadow-indigo-200 disabled:opacity-50 flex items-center gap-2">
-              {(isAnalyzingMarket || isAnalyzingStock) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-              {activeIntelTab === 'radar' ? (attribution ? 'Refresh Intelligence' : 'Synthesize Intelligence') : 'Analyze'}
+          <div className="flex items-center gap-3">
+            {activeIntelTab === 'deepdive' && (
+              <input
+                type="text"
+                placeholder="NSE Symbol"
+                value={stockSymbol}
+                onChange={(e) => setStockSymbol(e.target.value.toUpperCase())}
+                className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500 w-36"
+              />
+            )}
+            <button
+              onClick={activeIntelTab === 'radar' ? handleMarketAnalysis : handleStockAnalysis}
+              disabled={isAnalyzingMarket || isAnalyzingStock || (activeIntelTab === 'deepdive' && !stockSymbol)}
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm"
+            >
+              {(isAnalyzingMarket || isAnalyzingStock) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+              {activeIntelTab === 'radar' ? (attribution ? 'Refresh' : 'Synthesize Intelligence') : 'Analyze'}
             </button>
           </div>
         </div>
 
-        <CardContent className="flex-1 p-10">
+        <CardContent className="flex-1 p-6">
           {intelError && (
-            <div className="mb-8 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 animate-in fade-in slide-in-from-top-2">
-              <AlertCircle className="w-5 h-5" />
-              <span className="text-xs font-bold uppercase tracking-widest">{intelError}</span>
+            <div className="mb-6 p-3.5 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-700">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span className="text-sm">{intelError}</span>
             </div>
           )}
 
           {activeIntelTab === 'radar' ? (
             attribution ? (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl mx-auto">
-                <div className="flex items-center gap-3 mb-6">
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${attribution.sentiment === 'POSITIVE' || attribution.sentiment === 'BULLISH' ? 'bg-green-50 text-green-600 border-green-100' : 'bg-red-50 text-red-600 border-red-100'}`}>{attribution.sentiment} BIAS</span>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Impact Score: {attribution.impact_score}/100</span>
+              <div className="max-w-4xl mx-auto">
+                <div className="flex items-center gap-2.5 mb-5">
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${attribution.sentiment === 'POSITIVE' || attribution.sentiment === 'BULLISH' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>{attribution.sentiment}</span>
+                  <span className="text-xs text-gray-400">Impact: {attribution.impact_score}/100</span>
                 </div>
-                <h1 className="text-4xl font-black text-slate-900 leading-[1.1] mb-8 uppercase tracking-tighter">{attribution.headline}</h1>
-                <div className="prose prose-slate max-w-none">
-                  {attribution.narrative.split('\n\n').map((para, i) => <p key={i} className="text-slate-600 text-lg leading-relaxed mb-6 font-medium">{para}</p>)}
+                <h2 className="text-2xl font-bold text-gray-900 leading-snug mb-5">{attribution.headline}</h2>
+                <div className="space-y-4">
+                  {attribution.narrative.split('\n\n').map((para, i) => (
+                    <p key={i} className="text-gray-600 text-sm leading-relaxed">{para}</p>
+                  ))}
                 </div>
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center py-20 opacity-60">
-                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6 border border-slate-100"><Zap className="w-8 h-8 text-slate-300" /></div>
-                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter mb-2">Causal Engine Standby</h3>
-                <p className="text-slate-500 max-w-md text-sm font-medium">Intelligence synthesis is manual to optimize API consumption. Click 'Synthesize Intelligence' to run analysis on today's session.</p>
+              <div className="h-full flex flex-col items-center justify-center text-center py-16">
+                <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mb-4 border border-gray-100">
+                  <Zap className="w-7 h-7 text-gray-300" />
+                </div>
+                <h3 className="text-base font-semibold text-gray-700 mb-2">Market Intelligence Standby</h3>
+                <p className="text-gray-400 max-w-sm text-sm">Synthesis is manual to optimize API usage. Click 'Synthesize Intelligence' to run analysis on today's session.</p>
               </div>
             )
           ) : (
             stockAnalysis ? (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl mx-auto">
-                <div className="flex items-center gap-3 mb-6">
-                  <span className="px-3 py-1 bg-indigo-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest">{stockSymbol}</span>
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${stockAnalysis.sentiment === 'POSITIVE' || stockAnalysis.sentiment === 'BULLISH' || stockAnalysis.sentiment === 'BUY' ? 'bg-green-50 text-green-600 border-green-100' : 'bg-red-50 text-red-600 border-red-100'}`}>{stockAnalysis.sentiment} BIAS</span>
+              <div className="max-w-4xl mx-auto">
+                <div className="flex items-center gap-2.5 mb-5">
+                  <span className="px-2.5 py-1 bg-indigo-600 text-white rounded-full text-xs font-semibold">{stockSymbol}</span>
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${stockAnalysis.sentiment === 'POSITIVE' || stockAnalysis.sentiment === 'BULLISH' || stockAnalysis.sentiment === 'BUY' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>{stockAnalysis.sentiment}</span>
                 </div>
-                <h1 className="text-4xl font-black text-slate-900 leading-[1.1] mb-8 uppercase tracking-tighter">FORENSIC AUDIT: {stockAnalysis.headline}</h1>
-                <div className="prose prose-slate max-w-none mb-12">
-                  {(typeof stockAnalysis.narrative === 'string' ? stockAnalysis.narrative : '').split('\n\n').filter(Boolean).map((para, i) => <p key={i} className="text-slate-600 text-lg leading-relaxed mb-6 font-medium">{para}</p>)}
+                <h2 className="text-2xl font-bold text-gray-900 leading-snug mb-5">{stockAnalysis.headline}</h2>
+                <div className="space-y-4 mb-8">
+                  {(typeof stockAnalysis.narrative === 'string' ? stockAnalysis.narrative : '').split('\n\n').filter(Boolean).map((para, i) => (
+                    <p key={i} className="text-gray-600 text-sm leading-relaxed">{para}</p>
+                  ))}
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Liquidity Profile</p>
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center"><span className="text-xs font-bold text-slate-500">Spread %</span><span className={`text-sm font-black font-mono ${stockMetrics?.spread_pct && stockMetrics.spread_pct < 0.15 ? 'text-green-600' : 'text-amber-600'}`}>{stockMetrics?.spread_pct?.toFixed(3) || '--'}%</span></div>
-                      <div className="flex justify-between items-center"><span className="text-xs font-bold text-slate-500">Depth Ratio</span><span className="text-sm font-black font-mono text-slate-900">{stockMetrics?.depth_ratio?.toFixed(2) || '--'}</span></div>
-                      <div className="flex justify-between items-center"><span className="text-xs font-bold text-slate-500">Exec Style</span><span className="text-[10px] font-black text-indigo-600 uppercase">{stockMetrics?.execution_style || '--'}</span></div>
-                    </div>
-                  </div>
-                  <div className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100 md:col-span-2">
-                    <div className="flex items-center gap-2 mb-4"><Info className="w-4 h-4 text-indigo-600" /><p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Swing Trading Recommendation (1D - 1M)</p></div>
-                    <div className="flex items-start gap-6">
-                      <div className={`text-3xl font-black uppercase tracking-tighter ${stockAnalysis.sentiment === 'BUY' || stockAnalysis.sentiment === 'POSITIVE' ? 'text-green-600' : 'text-red-600'}`}>{stockAnalysis.sentiment === 'BUY' || stockAnalysis.sentiment === 'POSITIVE' ? 'Accumulate' : 'Avoid/Sell'}</div>
-                      <p className="text-sm font-medium text-slate-600 leading-relaxed">{typeof stockAnalysis.swing_recommendation === 'string' && stockAnalysis.swing_recommendation && !stockAnalysis.swing_recommendation.startsWith('[') ? stockAnalysis.swing_recommendation : `Based on current market volatility and ${stockSymbol}'s microstructure, the tactical outlook suggests ${stockAnalysis.sentiment.toLowerCase()} positioning.`}</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  {(stockAnalysis.analyst_calls || []).map((call, idx) => {
-                    const source = typeof call.source === 'string' ? call.source : String(call.source ?? '');
-                    const rating = typeof call.rating === 'string' ? call.rating : String(call.rating ?? '');
-                    const target = typeof call.target === 'string' ? call.target : String(call.target ?? '');
-                    const duration = call.duration && typeof call.duration === 'string' ? call.duration : '';
-                    return (
-                      <div key={idx} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 truncate">{source}</p>
-                        <div className={`text-xl font-black uppercase tracking-tighter ${rating.toUpperCase().includes('BUY') ? 'text-green-600' : 'text-slate-900'}`}>{rating}</div>
-                        <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Target: <span className="text-indigo-600">₹{target}</span></p>
-                        {duration ? <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Horizon: <span className="text-slate-600">{duration}</span></p> : null}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                  <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Liquidity Profile</p>
+                    <div className="space-y-2.5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-gray-500">Spread %</span>
+                        <span className={`text-sm font-semibold font-mono ${stockMetrics?.spread_pct && stockMetrics.spread_pct < 0.15 ? 'text-emerald-600' : 'text-amber-600'}`}>{stockMetrics?.spread_pct?.toFixed(3) || '--'}%</span>
                       </div>
-                    );
-                  })}
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-gray-500">Depth Ratio</span>
+                        <span className="text-sm font-semibold font-mono text-gray-900">{stockMetrics?.depth_ratio?.toFixed(2) || '--'}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-gray-500">Exec Style</span>
+                        <span className="text-xs font-semibold text-indigo-600">{stockMetrics?.execution_style || '--'}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 md:col-span-2">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Info className="w-3.5 h-3.5 text-indigo-600" />
+                      <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Swing Recommendation (1D–1M)</p>
+                    </div>
+                    <div className="flex items-start gap-4">
+                      <div className={`text-xl font-bold ${stockAnalysis.sentiment === 'BUY' || stockAnalysis.sentiment === 'POSITIVE' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {stockAnalysis.sentiment === 'BUY' || stockAnalysis.sentiment === 'POSITIVE' ? 'Accumulate' : 'Avoid / Sell'}
+                      </div>
+                      <p className="text-sm text-gray-600 leading-relaxed">
+                        {typeof stockAnalysis.swing_recommendation === 'string' && stockAnalysis.swing_recommendation && !stockAnalysis.swing_recommendation.startsWith('[')
+                          ? stockAnalysis.swing_recommendation
+                          : `Based on current market conditions and ${stockSymbol}'s microstructure, the tactical outlook suggests ${stockAnalysis.sentiment.toLowerCase()} positioning.`}
+                      </p>
+                    </div>
+                  </div>
                 </div>
+                {(stockAnalysis.analyst_calls || []).length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {(stockAnalysis.analyst_calls || []).map((call, idx) => {
+                      const source = typeof call.source === 'string' ? call.source : String(call.source ?? '');
+                      const rating = typeof call.rating === 'string' ? call.rating : String(call.rating ?? '');
+                      const target = typeof call.target === 'string' ? call.target : String(call.target ?? '');
+                      const duration = call.duration && typeof call.duration === 'string' ? call.duration : '';
+                      return (
+                        <div key={idx} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                          <p className="text-xs text-gray-400 mb-2 truncate">{source}</p>
+                          <div className={`text-base font-bold ${rating.toUpperCase().includes('BUY') ? 'text-emerald-600' : 'text-gray-900'}`}>{rating}</div>
+                          <p className="text-xs text-gray-400 mt-1">Target: <span className="text-indigo-600 font-medium">₹{target}</span></p>
+                          {duration && <p className="text-xs text-gray-400 mt-0.5">Horizon: <span className="text-gray-600">{duration}</span></p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center py-20 opacity-60">
-                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6 border border-slate-100"><Search className="w-8 h-8 text-slate-300" /></div>
-                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter mb-2">Equity Audit Standby</h3>
-                <p className="text-slate-500 max-w-md text-sm font-medium">Enter an NSE symbol and click 'Analyze' to perform a forensic audit and microstructure check.</p>
+              <div className="h-full flex flex-col items-center justify-center text-center py-16">
+                <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mb-4 border border-gray-100">
+                  <Search className="w-7 h-7 text-gray-300" />
+                </div>
+                <h3 className="text-base font-semibold text-gray-700 mb-2">Equity Deep Dive</h3>
+                <p className="text-gray-400 max-w-sm text-sm">Enter an NSE symbol and click 'Analyze' to run a forensic audit and microstructure check.</p>
               </div>
             )
           )}

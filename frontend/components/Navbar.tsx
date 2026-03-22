@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, BookOpen, FileText, Settings } from 'lucide-react';
+import { LayoutDashboard, BookOpen, FileText, Settings, Menu, X, TrendingUp } from 'lucide-react';
 import { getMarketSessionStatus } from '../services/marketService';
 
 interface NavbarProps {
@@ -11,6 +10,7 @@ interface NavbarProps {
 
 const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenSettings }) => {
   const [marketStatus, setMarketStatus] = useState(getMarketSessionStatus());
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -22,62 +22,105 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenSettings
   const navItems = [
     { id: 'monitor', label: 'Monitor', icon: LayoutDashboard },
     { id: 'research', label: 'Research', icon: BookOpen },
-    { id: 'reg30', label: 'Reg30', icon: FileText },
+    { id: 'reg30', label: 'Reg 30', icon: FileText },
   ];
 
+  const handleTabClick = (id: string) => {
+    setActiveTab(id);
+    setMobileOpen(false);
+  };
+
   return (
-    <nav className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm">
-      <div className="w-full mx-auto px-4 sm:px-6 lg:px-10">
-        <div className="flex justify-between h-16">
-          <div className="flex">
-            <div className="flex-shrink-0 flex items-center">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center mr-3">
-                <span className="text-white font-bold text-lg">M</span>
-              </div>
-              <span className="font-bold text-xl text-slate-900 tracking-tight">Intelligence Monitor</span>
+    <nav className="sticky top-0 z-50 bg-white border-b border-gray-200">
+      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-14">
+
+          {/* Brand */}
+          <div className="flex items-center gap-2.5 flex-shrink-0">
+            <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+              <TrendingUp className="w-4 h-4 text-white" />
             </div>
-            <div className="hidden sm:ml-10 sm:flex sm:space-x-8">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setActiveTab(item.id)}
-                    className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'border-indigo-500 text-slate-900'
-                        : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'
-                    }`}
-                  >
-                    <Icon className={`w-4 h-4 mr-2 ${isActive ? 'text-indigo-500' : 'text-slate-400'}`} />
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
+            <span className="font-bold text-gray-900 text-sm tracking-tight hidden sm:block">
+              Market Intelligence
+            </span>
+            <span className="font-bold text-gray-900 text-sm tracking-tight sm:hidden">MAIA</span>
           </div>
-          <div className="flex items-center">
-            <div className={`flex items-center px-3 py-1 rounded-full border ${
-              marketStatus.isOpen 
-                ? 'bg-green-50 border-green-200 text-green-700' 
-                : 'bg-slate-100 border-slate-200 text-slate-600'
-            } mr-4`}>
-              <span className={`w-2 h-2 rounded-full mr-2 ${
-                marketStatus.isOpen ? 'bg-green-500 animate-pulse' : 'bg-slate-400'
-              }`}></span>
-              <span className="text-xs font-bold uppercase tracking-wider">{marketStatus.status}</span>
+
+          {/* Desktop tabs */}
+          <div className="hidden sm:flex items-center gap-1">
+            {navItems.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => handleTabClick(id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  activeTab === id
+                    ? 'bg-indigo-50 text-indigo-700'
+                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Right side */}
+          <div className="flex items-center gap-2">
+            {/* Market status */}
+            <div className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
+              marketStatus.isOpen
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                : 'bg-gray-100 border-gray-200 text-gray-500'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${marketStatus.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
+              {marketStatus.isOpen ? 'Market Open' : 'Market Closed'}
             </div>
-            <button 
+
+            {/* Settings */}
+            <button
               onClick={onOpenSettings}
-              className="p-2 rounded-full text-slate-400 hover:text-slate-500 hover:bg-slate-100 transition-colors"
-              title="API Settings"
+              className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+              title="Settings"
             >
-              <Settings className="w-5 h-5" />
+              <Settings className="w-4 h-4" />
+            </button>
+
+            {/* Mobile menu toggle */}
+            <button
+              onClick={() => setMobileOpen(v => !v)}
+              className="sm:hidden p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            >
+              {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
           </div>
         </div>
       </div>
+
+      {/* Mobile dropdown */}
+      {mobileOpen && (
+        <div className="sm:hidden border-t border-gray-100 bg-white px-4 py-3 space-y-1">
+          {navItems.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => handleTabClick(id)}
+              className={`flex w-full items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === id
+                  ? 'bg-indigo-50 text-indigo-700'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          ))}
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold mt-2 ${
+            marketStatus.isOpen ? 'text-emerald-700 bg-emerald-50' : 'text-gray-500 bg-gray-50'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${marketStatus.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
+            {marketStatus.isOpen ? 'Market Open' : 'Market Closed'}
+          </div>
+        </div>
+      )}
     </nav>
   );
 };

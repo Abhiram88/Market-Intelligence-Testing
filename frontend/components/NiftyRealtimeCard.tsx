@@ -1,93 +1,106 @@
-
 import React from 'react';
 import { MarketTelemetry, getMarketSessionStatus } from '../services/marketService';
-import { Activity, Zap, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
 
 interface NiftyRealtimeCardProps {
   telemetry: MarketTelemetry | null;
 }
 
 const formatVolume = (vol: number) => {
-  if (!vol) return 'N/A';
+  if (!vol) return '—';
   return `${(vol / 1000000).toFixed(2)}M`;
 };
 
 export const NiftyRealtimeCard: React.FC<NiftyRealtimeCardProps> = ({ telemetry }) => {
-
-  const isPositive = telemetry ? telemetry.change >= 0 : false;
+  const isPositive = telemetry ? telemetry.change >= 0 : true;
   const sign = isPositive ? '+' : '';
+  const marketOpen = getMarketSessionStatus().isOpen;
 
-  const trendGlowClass = (() => {
-    if (!telemetry || !getMarketSessionStatus().isOpen) return '';
-    if (isPositive) return 'shadow-[0_0_30px_5px_rgba(34,197,94,0.3)]';
-    return 'shadow-[0_0_30px_5px_rgba(239,68,68,0.3)]';
-  })();
+  const accentColor = isPositive ? 'emerald' : 'rose';
 
-  const getStatusIndicator = () => {
+  const StatusBadge = () => {
     if (telemetry?.errorType === 'token') {
       return (
-        <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-amber-900/30 border-amber-800/50">
-          <AlertTriangle className="w-3 h-3 text-amber-400" />
-          <span className="text-[10px] font-bold tracking-widest uppercase text-amber-400">GATEWAY ERROR</span>
-        </div>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200">
+          <AlertTriangle className="w-3 h-3" />
+          Gateway Error
+        </span>
       );
     }
     if (telemetry?.dataSource === 'Breeze Direct') {
       return (
-        <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-green-900/30 border-green-800/50">
-          <span className="flex h-2 w-2 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-green-400"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
           </span>
-          <span className="text-[10px] font-bold tracking-widest uppercase text-green-400">REAL-TIME FEED</span>
-        </div>
+          Live Feed
+        </span>
       );
     }
-
     return (
-      <div className="flex items-center space-x-2 border rounded-full px-3 py-1 bg-slate-800/30 border-slate-700/50">
-        <Zap className="w-3 h-3 text-slate-400 animate-pulse" />
-        <span className="text-[10px] font-bold tracking-widest uppercase text-slate-400">ESTABLISHING LINK</span>
-      </div>
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-500 border border-gray-200">
+        <WifiOff className="w-3 h-3 animate-pulse" />
+        Connecting…
+      </span>
     );
   };
 
   return (
-    <div className={`lg:col-span-1 rounded-3xl bg-[#0a0a12] text-white shadow-2xl overflow-hidden relative border border-slate-800 transition-shadow duration-500 ${trendGlowClass}`}>
-      <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
-        <Activity className="w-32 h-32" />
-      </div>
-      <div className="p-8 relative z-10">
-        <div className="flex justify-between items-start mb-8">
-          {getStatusIndicator()}
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden h-full flex flex-col">
+      {/* Colored top stripe */}
+      <div className={`h-1 w-full ${telemetry ? (isPositive ? 'bg-emerald-500' : 'bg-rose-500') : 'bg-gray-200'}`} />
+
+      <div className="flex flex-col flex-1 p-6">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">Index</p>
+            <h2 className="text-lg font-bold text-gray-900 mt-0.5">NIFTY 50</h2>
+          </div>
+          <StatusBadge />
         </div>
-        <h2 className="text-xl font-bold text-slate-200 mb-1 tracking-tight">NIFTY 50</h2>
+
+        {/* Price */}
         {telemetry ? (
-          <>
-            <div className="flex flex-col mb-10">
-              <span className="text-6xl font-light tracking-tighter text-white">
-                {telemetry.last_traded_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          <div className="flex-1 flex flex-col justify-center">
+            <div className="mb-1">
+              <span className="text-5xl font-light text-gray-900 tracking-tight tabular-nums">
+                {telemetry.last_traded_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </span>
-              <div className="flex items-center mt-3">
-                <span className={`text-lg font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-                  {`${sign}${telemetry.change.toFixed(2)} (${sign}${telemetry.percent_change.toFixed(2)}%)`}
-                </span>
-              </div>
             </div>
-            <div className="pt-6 border-t border-slate-800/50">
-              <div className="bg-slate-900/50 p-3 rounded-2xl border border-slate-800">
-                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Vol (M)</p>
-                <p className="font-mono text-sm text-slate-300">{formatVolume(telemetry.volume)}</p>
-              </div>
+            <div className={`flex items-center gap-1.5 mb-6 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {isPositive
+                ? <TrendingUp className="w-4 h-4" />
+                : <TrendingDown className="w-4 h-4" />}
+              <span className="text-base font-semibold tabular-nums">
+                {sign}{telemetry.change.toFixed(2)}
+              </span>
+              <span className="text-sm font-medium opacity-80 tabular-nums">
+                ({sign}{telemetry.percent_change.toFixed(2)}%)
+              </span>
             </div>
-          </>
+
+            {/* Stats row */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'High', value: telemetry.high > 0 ? telemetry.high.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—', color: 'text-emerald-600' },
+                { label: 'Low', value: telemetry.low > 0 ? telemetry.low.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—', color: 'text-rose-600' },
+                { label: 'Volume', value: formatVolume(telemetry.volume), color: 'text-gray-700' },
+              ].map(stat => (
+                <div key={stat.label} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">{stat.label}</p>
+                  <p className={`text-xs font-bold tabular-nums ${stat.color}`}>{stat.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : (
-          <div className="h-48 flex flex-col items-center justify-center text-slate-500">
-            {!getMarketSessionStatus().isOpen ? (
-              <p className="text-center text-slate-500 font-medium">Market closed</p>
-            ) : (
-              <p>Waiting for live data…</p>
-            )}
+          <div className="flex-1 flex flex-col items-center justify-center text-center py-8">
+            <Activity className="w-10 h-10 text-gray-200 mb-3" />
+            <p className="text-sm font-medium text-gray-400">
+              {!marketOpen ? 'Market closed' : 'Waiting for live data…'}
+            </p>
           </div>
         )}
       </div>

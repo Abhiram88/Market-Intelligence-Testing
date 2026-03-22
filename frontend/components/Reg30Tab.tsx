@@ -243,19 +243,16 @@ const Reg30Tab: React.FC = () => {
 
   return (
     <div className="space-y-8 font-sans">
-      <div className="flex justify-between items-center">
-        <div className="flex space-x-4 text-xs font-bold text-indigo-600 uppercase tracking-wider">
-          <span className="text-slate-400">Important NSE Data Links</span>
-          <a href="https://www.nseindia.com/companies-listing/corporate-filings-announcements-xbrl" target="_blank" rel="noreferrer" className="hover:underline bg-indigo-50 px-2 py-1 rounded">XBRL Announcements</a>
-          <a href="https://www.nseindia.com/companies-listing/corporate-filings-actions" target="_blank" rel="noreferrer" className="hover:underline bg-indigo-50 px-2 py-1 rounded">Corporate Actions</a>
-          <a href="https://www.nseindia.com/companies-listing/debt-centralised-database/crd" target="_blank" rel="noreferrer" className="hover:underline bg-indigo-50 px-2 py-1 rounded">Credit Reports</a>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-400 font-medium">NSE Links:</span>
+          <a href="https://www.nseindia.com/companies-listing/corporate-filings-announcements-xbrl" target="_blank" rel="noreferrer" className="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors font-medium">XBRL</a>
+          <a href="https://www.nseindia.com/companies-listing/corporate-filings-actions" target="_blank" rel="noreferrer" className="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors font-medium">Corp Actions</a>
+          <a href="https://www.nseindia.com/companies-listing/debt-centralised-database/crd" target="_blank" rel="noreferrer" className="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors font-medium">Credit Reports</a>
         </div>
-        <div className="flex space-x-2">
-          <button className="px-3 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded uppercase hover:bg-indigo-700 transition-colors">Simulation Tool</button>
-          <button onClick={handleWipeLedger} className="px-3 py-1 bg-red-600 text-white text-[10px] font-bold rounded uppercase hover:bg-red-700 transition-colors flex items-center">
-            <Trash2 className="w-3 h-3 mr-1" /> Wipe Ledger
-          </button>
-        </div>
+        <button onClick={handleWipeLedger} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 border border-red-200">
+          <Trash2 className="w-3 h-3" /> Wipe Ledger
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -290,22 +287,22 @@ const Reg30Tab: React.FC = () => {
         </Card>
 
         {/* ── Manual CSV upload (kept as fallback) ─────────── */}
-        <Card className="bg-[#0a0a12] text-white border-slate-800 shadow-xl">
-          <CardContent className="p-8 flex flex-col justify-center h-full gap-6">
+        <Card className="bg-white border-slate-200 shadow-sm">
+          <CardContent className="p-6 flex flex-col justify-center h-full gap-4">
             <div>
-              <h3 className="text-xl font-bold uppercase tracking-tight">Manual CSV Upload</h3>
-              <p className="text-slate-400 text-sm mt-2">
+              <h3 className="text-lg font-bold text-slate-900 uppercase tracking-tight">Manual CSV Upload</h3>
+              <p className="text-slate-400 text-xs mt-1">
                 Upload a Corporate Actions or Credit Rating CSV as a manual fallback.
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               {(['CorpAction', 'CreditRating'] as const).map((src) => (
                 <label
                   key={src}
-                  className="border-2 border-dashed border-slate-700 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-800 transition-colors h-28"
+                  className="border-2 border-dashed border-slate-200 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 hover:border-indigo-300 transition-colors h-24"
                 >
-                  <Upload className="w-5 h-5 text-slate-400 mb-2" />
-                  <span className="text-[10px] font-bold text-slate-300 uppercase text-center">{src}</span>
+                  <Upload className="w-4 h-4 text-slate-400 mb-2" />
+                  <span className="text-[10px] font-bold text-slate-500 uppercase text-center">{src}</span>
                   <input
                     type="file"
                     accept=".csv"
@@ -319,7 +316,7 @@ const Reg30Tab: React.FC = () => {
               <button
                 onClick={runBatchAnalysis}
                 disabled={isProcessing}
-                className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg uppercase tracking-wide text-sm transition-colors disabled:opacity-50 flex justify-center items-center gap-2"
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg uppercase tracking-wide text-sm transition-colors disabled:opacity-50 flex justify-center items-center gap-2 shadow-sm"
               >
                 {isProcessing ? <><RefreshCw className="w-4 h-4 animate-spin" />{processingStatus || 'Processing…'}</> : `Run CSV Analysis (${candidates.length} pending)`}
               </button>

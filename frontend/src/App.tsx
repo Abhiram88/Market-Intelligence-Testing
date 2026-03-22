@@ -18,7 +18,7 @@ const App: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
       
-      <main className="w-full px-4 sm:px-6 lg:px-10 py-8">
+      <main className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-10 py-8">
         {activeTab === 'monitor' && <MonitorTab />}
         {activeTab === 'research' && <ResearchTab />}
         {activeTab === 'reg30' && <Reg30Tab />}
