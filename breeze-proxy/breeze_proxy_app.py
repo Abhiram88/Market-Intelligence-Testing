@@ -123,7 +123,9 @@ def home():
             "/api/breeze/health",
             "/api/breeze/quotes",
             "/api/gemini/summarize_market_outlook",
-            "/api/gemini/stock-deep-dive"
+            "/api/gemini/stock-deep-dive",
+            "/api/stockinsights/announcements",
+            "/api/stockinsights/health"
         ]
     }), 200
 
@@ -637,6 +639,129 @@ def get_historical():
 
 
 # ─────────────────────────────────────────────
+# STOCKINSIGHTS API ROUTES (NSE CORPORATE ANNOUNCEMENTS)
+# ─────────────────────────────────────────────
+@app.route("/api/stockinsights/announcements", methods=["GET", "OPTIONS"])
+@cross_origin()
+def fetch_stockinsights_announcements():
+    """
+    Fetch NSE corporate announcements from StockInsights API.
+    
+    Query Parameters:
+        type (int): Announcement type (8=Contracts, 2=M&A, 13=Updates, 21=Litigation)
+        from_date (str): Start date YYYY-MM-DD
+        to_date (str): End date YYYY-MM-DD
+        symbols (str): Optional comma-separated list of symbols
+    
+    Returns:
+        JSON with announcements data
+    """
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    try:
+        import requests as req
+        
+        # Get StockInsights API configuration from environment
+        STOCKINSIGHTS_API_URL = get_secret("STOCKINSIGHTS_API_URL")
+        STOCKINSIGHTS_API_KEY = get_secret("STOCKINSIGHTS_API_KEY")
+        
+        if not STOCKINSIGHTS_API_KEY:
+            logger.error("STOCKINSIGHTS_API_KEY not configured")
+            return jsonify({
+                "success": False,
+                "error": "StockInsights API key not configured"
+            }), 500
+        
+        # Get parameters from frontend
+        announcement_type = request.args.get('type', '8')  # Default: contracts
+        start_date = request.args.get('from_date')
+        end_date = request.args.get('to_date')
+        symbols = request.args.get('symbols')  # Optional
+        
+        # Validate required parameters
+        if not start_date or not end_date:
+            return jsonify({
+                "success": False,
+                "error": "from_date and to_date are required"
+            }), 400
+        
+        # Build request to StockInsights API
+        params = {
+            'type': announcement_type,
+            'from_date': start_date,
+            'to_date': end_date,
+            'api_key': STOCKINSIGHTS_API_KEY
+        }
+        
+        if symbols:
+            params['symbols'] = symbols
+        
+        # Log the request
+        logger.info(f"Fetching StockInsights announcements: type={announcement_type}, from={start_date}, to={end_date}")
+        
+        # Call StockInsights API
+        api_url = f"{STOCKINSIGHTS_API_URL}/announcements" if STOCKINSIGHTS_API_URL else "https://api.stockinsights-ai.com/announcements"
+        
+        response = req.get(
+            api_url,
+            params=params,
+            timeout=30
+        )
+        
+        # Check response status
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"StockInsights API success: fetched {len(data) if isinstance(data, list) else 'N/A'} announcements")
+            return jsonify({
+                'success': True,
+                'data': data
+            }), 200
+        else:
+            logger.error(f"StockInsights API error: {response.status_code} - {response.text[:200]}")
+            return jsonify({
+                'success': False,
+                'error': f'StockInsights API error: {response.status_code}',
+                'details': response.text[:200]
+            }), response.status_code
+            
+    except req.exceptions.Timeout:
+        logger.error("StockInsights API request timeout")
+        return jsonify({
+            'success': False,
+            'error': 'Request timeout - StockInsights API did not respond in time'
+        }), 504
+        
+    except req.exceptions.RequestException as e:
+        logger.error(f"StockInsights API request error: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Network error: {str(e)}'
+        }), 500
+        
+    except Exception as e:
+        logger.exception("StockInsights API unexpected error")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route("/api/stockinsights/health", methods=["GET"])
+@cross_origin()
+def stockinsights_health():
+    """Check if StockInsights API is configured"""
+    STOCKINSIGHTS_API_KEY = get_secret("STOCKINSIGHTS_API_KEY")
+    STOCKINSIGHTS_API_URL = get_secret("STOCKINSIGHTS_API_URL")
+    
+    return jsonify({
+        "configured": bool(STOCKINSIGHTS_API_KEY),
+        "api_url": STOCKINSIGHTS_API_URL or "https://api.stockinsights-ai.com",
+        "status": "ready" if STOCKINSIGHTS_API_KEY else "not_configured"
+    }), 200
+
+
+# ─────────────────────────────────────────────
 # GEMINI ROUTES
 # ─────────────────────────────────────────────
 @app.route('/api/gemini/summarize_market_outlook', methods=['POST', 'OPTIONS'])
@@ -1107,10 +1232,127 @@ def parse_attachment():
         return jsonify({"error": str(e), "text": ""}), 500
 
 
-# TODO: Add /api/nse/announcements endpoint that accepts { from_date: "YYYY-MM-DD" }
-# and returns { announcements: [{ company_name, nse_ticker, published_date, source_link }] }
-# by fetching from StockInsights API or NSE XBRL feed filtered to ORDER_CONTRACT events.
-# This endpoint is called by the frontend syncNseEvents() function in reg30Service.ts.
+@app.route('/api/nse/announcements', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def nse_announcements():
+    """
+    Fetch recent NSE corporate announcements for Reg30 order/contract analysis.
+    Body: { from_date: "YYYY-MM-DD" }
+    Returns: { announcements: [{ company_name, nse_ticker, published_date, source_link }] }
+    """
+    if request.method == 'OPTIONS':
+        return jsonify(success=True)
+    try:
+        import requests as req_lib
+        from datetime import datetime, timedelta
+
+        payload = request.get_json(silent=True) or {}
+        from_date_str = payload.get('from_date', '')
+
+        # Parse from_date (expects YYYY-MM-DD); cap range at 90 days to avoid huge results
+        try:
+            from_dt = datetime.strptime(from_date_str, '%Y-%m-%d')
+        except (ValueError, TypeError):
+            from_dt = datetime.utcnow() - timedelta(days=7)
+        to_dt = datetime.utcnow()
+        max_from = to_dt - timedelta(days=90)
+        if from_dt < max_from:
+            from_dt = max_from
+
+        # NSE API uses DD-MM-YYYY
+        from_nse = from_dt.strftime('%d-%m-%Y')
+        to_nse = to_dt.strftime('%d-%m-%Y')
+
+        base_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.nseindia.com/',
+        }
+
+        sess = req_lib.Session()
+        sess.headers.update(base_headers)
+
+        # Warm up session cookies by visiting NSE homepage
+        try:
+            sess.get('https://www.nseindia.com', timeout=10)
+        except Exception as warm_err:
+            logger.warning(f'NSE session warmup failed: {warm_err}')
+
+        # Fetch corporate announcements from NSE API
+        api_url = (
+            f'https://www.nseindia.com/api/corporate-announcements'
+            f'?index=equities&from_date={from_nse}&to_date={to_nse}'
+        )
+        resp = sess.get(api_url, timeout=30)
+        resp.raise_for_status()
+
+        items = resp.json()
+        if not isinstance(items, list):
+            items = items.get('data', []) if isinstance(items, dict) else []
+
+        # Keywords that indicate an order/contract announcement
+        ORDER_KEYWORDS = {
+            'order', 'contract', 'bagged', 'awarded', 'award', 'secured',
+            'win', 'won', 'new business', 'agreement', 'mou', 'loa',
+            'letter of award', 'purchase order', 'work order', 'project',
+        }
+
+        def _is_order_event(subject: str) -> bool:
+            s_lower = subject.lower()
+            return any(kw in s_lower for kw in ORDER_KEYWORDS)
+
+        def _parse_date(raw: str) -> str:
+            """Convert NSE date formats to YYYY-MM-DD."""
+            raw = (raw or '').strip()
+            for fmt in ('%d-%b-%Y', '%d-%b-%y', '%d/%m/%Y', '%d-%m-%Y'):
+                try:
+                    return datetime.strptime(raw, fmt).strftime('%Y-%m-%d')
+                except (ValueError, TypeError):
+                    pass
+            # ISO format: "2024-06-24T14:30:00+05:30" -> "2024-06-24"
+            if len(raw) >= 10 and raw[4:5] == '-' and raw[7:8] == '-':
+                return raw[:10]
+            return from_dt.strftime('%Y-%m-%d')
+
+        announcements = []
+        for item in items:
+            subject = str(item.get('subject', '') or item.get('desc', ''))
+            if not _is_order_event(subject):
+                continue  # skip non-order events to avoid flooding the AI pipeline
+
+            company_name = str(item.get('sm_name', '') or item.get('company', '')).strip()
+            symbol = str(item.get('symbol', '') or '').strip()
+            an_dt = str(item.get('sort_date', '') or item.get('an_dt', ''))
+            attachment = str(item.get('attchmntFile', '') or '').strip()
+
+            if not company_name or not symbol:
+                continue
+
+            pub_date = _parse_date(an_dt)
+
+            if attachment:
+                if attachment.endswith('.xml'):
+                    source_link = f'https://nsearchives.nseindia.com/corporate/xbrl/{attachment}'
+                else:
+                    source_link = f'https://nsearchives.nseindia.com/corporate/ixbrl/{attachment}'
+            else:
+                source_link = ''
+
+            announcements.append({
+                'company_name': company_name,
+                'nse_ticker': symbol,
+                'published_date': pub_date,
+                'source_link': source_link,
+            })
+
+        logger.info(f'NSE announcements: {len(announcements)} order events ({from_nse} → {to_nse})')
+        return jsonify({'announcements': announcements})
+
+    except Exception as e:
+        logger.warning(f'NSE announcements endpoint error: {e}')
+        return jsonify({'error': str(e), 'announcements': []}), 500
+
 
 @app.route('/api/gemini/reg30-analyze', methods=['POST', 'OPTIONS'])
 @cross_origin()
