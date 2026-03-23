@@ -604,7 +604,8 @@ export const runReg30Analysis = async (
           };
         }
 
-        const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${aiResult.summary.substring(0, 30)}|${c.id}`);
+        // Use source_link as the stable dedup key — summary changes each Gemini run
+        const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${c.attachment_link || c.link || c.id}`);
         // Only include columns that exist on analyzed_events to avoid Supabase 400 (PGRST102)
         const payload: Record<string, unknown> = {
           event_date:            resolvedEventDate || null,
@@ -618,6 +619,7 @@ export const runReg30Analysis = async (
           action_recommendation: scoring.recommendation || 'TRACK',
           extracted_json:        typeof ext === 'object' ? ext : {},
           attachment_link:       c.attachment_link ?? null,
+          attachment_text:       c.attachment_text ?? null,
           source_link:           c.link ?? null,
           event_fingerprint:     fingerprint,
           confidence:            Number(aiResult.confidence) || 0,
@@ -859,11 +861,9 @@ export const syncNseEvents = async (
       symbol: r.nse_ticker,
       company_name: r.company_name,
       category: 'NSE Announcement',
-      // summary_text from StockInsights AI — used as fallback if PDF/attachment parse fails
       raw_text: r.summary_text || `${r.company_name} | ${r.published_date}`,
+      attachment_text: r.attachment_text || '',  // pre-extracted full text from StockInsights
       attachment_link: r.source_link,
-      // StockInsights announcement_type_id='8' = Order/Contract Awards — treat as ORDER_CONTRACT from the start
-      // so scoring never falls to the default OTHER=10, even when PDF parse fails.
       event_family: 'ORDER_CONTRACT' as Reg30EventFamily,
       link: r.source_link,
     }));
