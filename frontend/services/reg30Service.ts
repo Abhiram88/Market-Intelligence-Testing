@@ -48,12 +48,12 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         candidate: {
-          company_name: candidate.company_name,
-          symbol: candidate.symbol,
-          source: candidate.source,
-          raw_text: candidate.raw_text,
+          company_name:   candidate.company_name,
+          symbol:         candidate.symbol,
+          source_link:    candidate.attachment_link || candidate.link,
+          event_date:     candidate.event_date,
+          published_date: candidate.event_date,
         },
-        attachment_text: candidate.attachment_text || '',
       }),
     });
     if (!res.ok) {
@@ -62,21 +62,28 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
     }
     const data = await res.json();
     if (!data || typeof data.summary !== 'string') return null;
-    // Proxy returns extraction-only schema (summary, direction_hint, confidence, extracted, evidence_spans, missing_fields).
-    // Impact and recommendation are computed by calculateScoreAndRecommendation in the pipeline.
     const extracted = data.extracted && typeof data.extracted === 'object' ? data.extracted : {};
     const mergedExtracted = { ...extracted };
     if (data.symbol && !mergedExtracted.nse_symbol && !mergedExtracted.symbol) mergedExtracted.nse_symbol = data.symbol;
     if (data.company_name && !mergedExtracted.company_name) mergedExtracted.company_name = data.company_name;
     return {
-      summary: data.summary,
-      impact_score: typeof data.impact_score === 'number' ? data.impact_score : 0,
-      recommendation: (data.recommendation as Reg30Analysis['recommendation']) || 'TRACK',
-      confidence: typeof data.confidence === 'number' ? data.confidence : 0,
+      summary:        data.summary,
+      impact_score:   typeof data.impact_score === 'number' ? data.impact_score : 0,
+      recommendation: ((data.action_recommendation || data.recommendation || 'TRACK') as Reg30Analysis['recommendation']),
+      confidence:     typeof data.confidence === 'number' ? data.confidence : 0,
       missing_fields: Array.isArray(data.missing_fields) ? data.missing_fields : [],
       evidence_spans: Array.isArray(data.evidence_spans) ? data.evidence_spans : [],
-      extracted: mergedExtracted,
-    } as Reg30Analysis;
+      extracted:      mergedExtracted,
+      // Proxy-scored extra fields (stored on the object as dynamic properties)
+      _proxy_scored:    data._proxy_scored === true,
+      _event_family:    data._event_family || data.event_family || null,
+      _direction:       data._direction || data.direction || null,
+      _scoring_factors: Array.isArray(data._scoring_factors) ? data._scoring_factors : (Array.isArray(data.scoring_factors) ? data.scoring_factors : []),
+      _market_cap_cr:   typeof data._market_cap_cr === 'number' ? data._market_cap_cr : (typeof data.market_cap_cr === 'number' ? data.market_cap_cr : null),
+      _pat_cr:          typeof data._pat_cr === 'number' ? data._pat_cr : (typeof data.pat_cr === 'number' ? data.pat_cr : null),
+      _networth_cr:     typeof data._networth_cr === 'number' ? data._networth_cr : (typeof data.networth_cr === 'number' ? data.networth_cr : null),
+      _event_datetime:  data._event_datetime || data.event_datetime || null,
+    } as any;
   } catch (e) {
     console.error('Reg30 proxy analysis failed:', e);
     return null;
@@ -489,7 +496,11 @@ export const runReg30Analysis = async (
       // was inside `if (!aiResult)`, so on a cache hit symbolFromText was never
       // populated and the symbol was stored as N/A every time.
       const attachment_text = await fetchAttachmentText(c.attachment_link || "");
-      if (attachment_text.length < 100) {
+      // StockInsights candidates have a direct PDF URL (not an nsearchives XBRL link).
+      // The proxy fetches that PDF itself — the frontend text fetch returns empty, which is fine.
+      const sourceLink = c.attachment_link || c.link || '';
+      const proxyCanFetchPdf = sourceLink.startsWith('http') && !sourceLink.includes('nsearchives.nseindia');
+      if (attachment_text.length < 100 && !proxyCanFetchPdf) {
         onRowProgress(c.id, 'FAILED');
         continue;
       }
@@ -548,11 +559,24 @@ export const runReg30Analysis = async (
         // even when Gemini or the proxy regex only saw a truncated/metadata-heavy window.
         const resolvedSymbol = ext.nse_symbol || ext.symbol || symbolFromText || normalizeSymbol(c.symbol);
         const resolvedCompany = normalizeCompany(ext.company_name) || companyFromText || normalizeCompany(c.company_name) || 'Unknown';
-        const familyForScoring =
-          c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
+        const proxyAny = aiResult as any;
+        const proxied = proxyAny._proxy_scored === true;
+        const proxyFamily = proxyAny._event_family as Reg30EventFamily | null;
+        const familyForScoring: Reg30EventFamily = proxyFamily ||
+          (c.event_family === 'OTHER' && (ext.order_value_cr != null || ['LOA', 'WO', 'NTP', 'L1'].includes(ext.stage || ''))
             ? 'ORDER_CONTRACT'
-            : c.event_family!;
-        const scoring = calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, resolvedEventDate);
+            : c.event_family!);
+        const scoring = proxied
+          ? {
+              impact_score:            aiResult.impact_score,
+              direction:               ((proxyAny._direction || 'NEUTRAL') as Sentiment),
+              recommendation:          aiResult.recommendation,
+              factors:                 proxyAny._scoring_factors || [],
+              conversion_bonus:        0,
+              final_execution_months:  ext.execution_months || null,
+              order_type:              ext.order_type || 'UNKNOWN',
+            }
+          : calculateScoreAndRecommendation(familyForScoring, aiResult.extracted, aiResult.confidence, resolvedEventDate);
         
         let analysisPayload: any = {};
         if (scoring.impact_score >= 50) {
@@ -610,7 +634,7 @@ export const runReg30Analysis = async (
           };
         }
 
-        const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${aiResult.summary.substring(0, 30)}|${c.id}`);
+        const fingerprint = getStringHash(`${resolvedSymbol}|${resolvedCompany}|${resolvedEventDate}|${c.attachment_link || c.link || c.id}`);
         const attachmentTextStored = cleanedText || attachment_text || "Content from Cache";
         // Only include columns that exist on analyzed_events to avoid Supabase 400 (PGRST102)
         const payload: Record<string, unknown> = {
@@ -633,6 +657,10 @@ export const runReg30Analysis = async (
           evidence_spans: Array.isArray(aiResult.evidence_spans) ? aiResult.evidence_spans : [],
           missing_fields: Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
           scoring_factors: Array.isArray(scoring.factors) ? scoring.factors : [],
+          event_datetime: proxyAny._event_datetime || null,
+          market_cap_cr: typeof proxyAny._market_cap_cr === 'number' ? proxyAny._market_cap_cr : null,
+          pat_cr: typeof proxyAny._pat_cr === 'number' ? proxyAny._pat_cr : null,
+          networth_cr: typeof proxyAny._networth_cr === 'number' ? proxyAny._networth_cr : null,
           ...analysisPayload
         };
         const cleanPayload: Record<string, unknown> = {};
@@ -987,4 +1015,42 @@ export const parseNseCsv = (text: string, source: Reg30Source): EventCandidate[]
     });
   }
   return candidates;
+};
+
+/**
+ * Fetch NSE order/contract announcements from the proxy (StockInsights API),
+ * build EventCandidate list, and run the full Reg30 analysis pipeline.
+ * The proxy fetches the PDF from source_link directly — no client-side text extraction needed.
+ */
+export const syncNseEvents = async (
+  onRowProgress: (id: string, step: 'FETCHING' | 'AI_ANALYZING' | 'SAVING' | 'COMPLETED' | 'FAILED') => void,
+  days = 7
+): Promise<Reg30Report[]> => {
+  try {
+    const res = await fetch(resolveBreezeUrl('/api/nse/announcements'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days }),
+    });
+    if (!res.ok) throw new Error(`Announcements fetch failed: ${res.status}`);
+    const data = await res.json();
+    const rows: any[] = data.announcements || data.results || (Array.isArray(data) ? data : []);
+    if (rows.length === 0) return [];
+    const candidates: EventCandidate[] = rows.map((r: any, i: number) => ({
+      id: s(`${r.nse_ticker}-${r.published_date}-${i}`),
+      source: 'XBRL' as Reg30Source,
+      event_date: (r.published_date || '').split('T')[0],
+      symbol: r.nse_ticker || null,
+      company_name: r.company_name || 'Unknown',
+      category: 'ORDER_CONTRACT',
+      raw_text: `${r.company_name} | ${r.published_date}`,
+      attachment_link: r.source_link,
+      event_family: 'ORDER_CONTRACT' as Reg30EventFamily,
+      link: r.source_link,
+    }));
+    return await runReg30Analysis(candidates, onRowProgress);
+  } catch (e) {
+    console.error('[syncNseEvents] failed:', e);
+    return [];
+  }
 };
