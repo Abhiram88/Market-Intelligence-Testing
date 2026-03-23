@@ -613,10 +613,10 @@ export const runReg30Analysis = async (
           evidence_spans: Array.isArray(aiResult.evidence_spans) ? aiResult.evidence_spans : [],
           missing_fields: Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
           scoring_factors: Array.isArray(scoring.factors) ? scoring.factors : [],
-          event_datetime: proxyAny._event_datetime || null,
-          market_cap_cr: typeof proxyAny._market_cap_cr === 'number' ? proxyAny._market_cap_cr : null,
-          pat_cr: typeof proxyAny._pat_cr === 'number' ? proxyAny._pat_cr : null,
-          networth_cr: typeof proxyAny._networth_cr === 'number' ? proxyAny._networth_cr : null,
+          event_datetime: proxyAny.event_datetime || proxyAny._event_datetime || null,
+          market_cap_cr: proxyAny.market_cap_cr ?? proxyAny._market_cap_cr ?? null,
+          pat_cr:        proxyAny.pat_cr ?? proxyAny._pat_cr ?? null,
+          networth_cr:   proxyAny.networth_cr ?? proxyAny._networth_cr ?? null,
           ...analysisPayload
         };
         const cleanPayload: Record<string, unknown> = {};
@@ -935,6 +935,8 @@ export const syncNseEvents = async (
       category: 'ORDER_CONTRACT',
       raw_text: `${r.company_name} | ${r.published_date}`,
       attachment_link: r.source_link,
+      attachment_text: r.attachment_text || '',
+      raw_text: r.summary_text || r.attachment_text || '',
       event_family: 'ORDER_CONTRACT' as Reg30EventFamily,
       link: r.source_link,
     }));
