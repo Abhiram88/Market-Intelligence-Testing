@@ -657,10 +657,10 @@ export const runReg30Analysis = async (
           evidence_spans: Array.isArray(aiResult.evidence_spans) ? aiResult.evidence_spans : [],
           missing_fields: Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
           scoring_factors: Array.isArray(scoring.factors) ? scoring.factors : [],
-          event_datetime: proxyAny._event_datetime || null,
-          market_cap_cr: typeof proxyAny._market_cap_cr === 'number' ? proxyAny._market_cap_cr : null,
-          pat_cr: typeof proxyAny._pat_cr === 'number' ? proxyAny._pat_cr : null,
-          networth_cr: typeof proxyAny._networth_cr === 'number' ? proxyAny._networth_cr : null,
+          event_datetime: proxyAny.event_datetime || proxyAny._event_datetime || null,
+          market_cap_cr:  proxyAny.market_cap_cr ?? proxyAny._market_cap_cr ?? null,
+          pat_cr:         proxyAny.pat_cr ?? proxyAny._pat_cr ?? null,
+          networth_cr:    proxyAny.networth_cr ?? proxyAny._networth_cr ?? null,
           ...analysisPayload
         };
         const cleanPayload: Record<string, unknown> = {};
@@ -865,7 +865,7 @@ export const syncNseEvents = async (
       throw new Error(err?.error || `Proxy returned ${res.status}`);
     }
     const data = await res.json();
-    const rows: Array<{ company_name: string; nse_ticker: string; published_date: string; source_link: string }> =
+    const rows: Array<{ company_name: string; nse_ticker: string; published_date: string; source_link: string; attachment_text?: string; summary_text?: string }> =
       data.announcements || [];
     if (rows.length === 0) {
       onProgress('No new announcements found.');
@@ -879,9 +879,10 @@ export const syncNseEvents = async (
       symbol: r.nse_ticker,
       company_name: r.company_name,
       category: 'NSE Announcement',
-      raw_text: `${r.company_name} | ${r.published_date}`,
+      raw_text: r.summary_text || r.attachment_text || `${r.company_name} | ${r.published_date}`,
       attachment_link: r.source_link,
-      event_family: 'OTHER' as Reg30EventFamily,
+      attachment_text: r.attachment_text || '',
+      event_family: 'ORDER_CONTRACT' as Reg30EventFamily,
       link: r.source_link,
     }));
     return await runReg30Analysis(candidates, onRowProgress);
