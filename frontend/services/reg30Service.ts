@@ -57,15 +57,12 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         candidate: {
-          company_name:    candidate.company_name,
-          symbol:          candidate.symbol,
-          source:          candidate.source,
-          raw_text:        candidate.raw_text,          // StockInsights summary — fallback
-          attachment_text: candidate.attachment_text,  // pre-extracted clean text (preferred)
-          attachment_link: candidate.attachment_link,  // proxy fetches PDF bytes directly
-          source_link:     candidate.link,
-          event_date:      candidate.event_date,
-          published_date:  candidate.event_date,
+          company_name: candidate.company_name,
+          symbol:       candidate.symbol,
+          // source_link is the direct PDF URL — proxy fetches it and sends to Gemini multimodal
+          source_link:  candidate.attachment_link || candidate.link,
+          event_date:   candidate.event_date,
+          published_date: candidate.event_date,
         },
       }),
       signal: ctrl.signal,
@@ -854,6 +851,8 @@ export const syncNseEvents = async (
       return [];
     }
     onProgress(`Found ${rows.length} new announcement(s). Processing…`);
+    // Proxy now returns only: company_name, nse_ticker, published_date, source_link
+    // source_link is the direct PDF URL — proxy fetches it and sends to Gemini multimodal
     const candidates: EventCandidate[] = rows.map((r: any, i: number) => ({
       id: s(`${r.nse_ticker}-${r.published_date}-${i}`),
       source: 'XBRL' as Reg30Source,
@@ -861,10 +860,7 @@ export const syncNseEvents = async (
       symbol: r.nse_ticker,
       company_name: r.company_name,
       category: 'NSE Announcement',
-      // Use full document text as raw_text — attachment_text is the full OCR text from StockInsights,
-      // summary_text is the AI-generated summary. Either is better than just the company name.
-      raw_text: r.attachment_text || r.summary_text || `${r.company_name} | ${r.published_date}`,
-      attachment_text: r.attachment_text || r.summary_text || '',
+      raw_text: `${r.company_name} | ${r.published_date}`,
       attachment_link: r.source_link,
       event_family: 'ORDER_CONTRACT' as Reg30EventFamily,
       link: r.source_link,
