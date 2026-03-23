@@ -861,8 +861,10 @@ export const syncNseEvents = async (
       symbol: r.nse_ticker,
       company_name: r.company_name,
       category: 'NSE Announcement',
-      raw_text: r.summary_text || `${r.company_name} | ${r.published_date}`,
-      attachment_text: r.attachment_text || '',  // pre-extracted full text from StockInsights
+      // Use full document text as raw_text — attachment_text is the full OCR text from StockInsights,
+      // summary_text is the AI-generated summary. Either is better than just the company name.
+      raw_text: r.attachment_text || r.summary_text || `${r.company_name} | ${r.published_date}`,
+      attachment_text: r.attachment_text || r.summary_text || '',
       attachment_link: r.source_link,
       event_family: 'ORDER_CONTRACT' as Reg30EventFamily,
       link: r.source_link,
