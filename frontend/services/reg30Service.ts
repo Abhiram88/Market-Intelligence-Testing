@@ -657,10 +657,13 @@ export const runReg30Analysis = async (
           evidence_spans: Array.isArray(aiResult.evidence_spans) ? aiResult.evidence_spans : [],
           missing_fields: Array.isArray(aiResult.missing_fields) ? aiResult.missing_fields : [],
           scoring_factors: Array.isArray(scoring.factors) ? scoring.factors : [],
-          event_datetime: proxyAny.event_datetime || proxyAny._event_datetime || null,
-          market_cap_cr:  proxyAny.market_cap_cr ?? proxyAny._market_cap_cr ?? null,
-          pat_cr:         proxyAny.pat_cr ?? proxyAny._pat_cr ?? null,
-          networth_cr:    proxyAny.networth_cr ?? proxyAny._networth_cr ?? null,
+          event_datetime:   proxyAny.event_datetime || proxyAny._event_datetime || null,
+          market_cap_cr:    proxyAny.market_cap_cr ?? proxyAny._market_cap_cr ?? null,
+          pat_cr:           proxyAny.pat_cr ?? proxyAny._pat_cr ?? null,
+          networth_cr:      proxyAny.networth_cr ?? proxyAny._networth_cr ?? null,
+          conversion_bonus: scoring.conversion_bonus ?? 0,
+          execution_months: scoring.final_execution_months ?? null,
+          order_type:       scoring.order_type || proxyAny.order_type || null,
           ...analysisPayload
         };
         const cleanPayload: Record<string, unknown> = {};
