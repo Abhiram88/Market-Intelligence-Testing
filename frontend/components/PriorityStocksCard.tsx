@@ -53,6 +53,7 @@ const Badge: React.FC<{ children: React.ReactNode; color: 'emerald' | 'rose' | '
 
 export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyTick }) => {
   const [priorityStocks, setPriorityStocks] = useState<PriorityStock[]>([]);
+  const [stocksFetched, setStocksFetched] = useState(false);
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [historicalCache, setHistoricalCache] = useState<Record<string, number>>({});
@@ -72,6 +73,7 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
         company_name: String(row.company_name ?? ''),
       }));
       setPriorityStocks(mapped);
+      setStocksFetched(true);
       return data;
     } catch (e) { console.error('Watchlist fetch failed:', e); }
     return [];
@@ -105,6 +107,10 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // Wait for Supabase stocks to load before connecting — prevents a double
+    // subscription cycle (first with only NIFTY, then again with all stocks)
+    // which causes a proxy race condition that silently drops watchlist feeds.
+    if (!stocksFetched) return;
     const symbolsToSubscribe = ['NIFTY', ...priorityStocks.map(s => s.symbol)];
     const connect = () => {
       const socket = io(getProxyBaseUrl(), {
@@ -167,7 +173,7 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
       socketRef.current?.disconnect();
       socketRef.current = null;
     };
-  }, [watchlistKey]);
+  }, [watchlistKey, stocksFetched]);
 
   const validateMarketData = (q: QuoteData | undefined): { isValid: boolean; reason?: string } => {
     if (!q) return { isValid: false, reason: 'No quote data' };
