@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { supabase } from '../lib/supabase';
 import { fetchHistorical } from '../services/apiService';
 import { getMarketSessionStatus } from '../services/marketService';
-import { getProxyBaseUrl, normalizeBreezeQuoteFromRow } from '../services/breezeService';
+import { getProxyBaseUrl, normalizeBreezeQuoteFromRow, fetchBreezeQuote, getStockMappings } from '../services/breezeService';
 import { LiquidityMetrics } from '../types';
 import { X, ArrowUp, ArrowDown, Bookmark, AlertCircle, ChevronDown, ChevronUp, Code2 } from 'lucide-react';
 
@@ -105,6 +105,7 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
 
   const socketRef = useRef<Socket | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     // Wait for Supabase stocks to load before connecting — prevents a double
@@ -172,6 +173,47 @@ export const PriorityStocksCard: React.FC<PriorityStocksCardProps> = ({ onNiftyT
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       socketRef.current?.disconnect();
       socketRef.current = null;
+    };
+  }, [watchlistKey, stocksFetched]);
+
+  // REST polling fallback — ensures quotes update even when WebSocket ticks don't arrive
+  useEffect(() => {
+    if (!stocksFetched || priorityStocks.length === 0) return;
+
+    const pollQuotes = async () => {
+      if (!getMarketSessionStatus().isOpen) return;
+      const symbols = priorityStocks.map(s => s.symbol);
+      const mappings = await getStockMappings(symbols);
+      await Promise.allSettled(
+        symbols.map(async (symbol) => {
+          const stockCode = mappings[symbol] || symbol;
+          try {
+            const quote = await fetchBreezeQuote(stockCode);
+            setQuotes(prev => ({
+              ...prev,
+              [symbol]: {
+                ...quote,
+                high: quote.high !== 0 ? quote.high : (prev[symbol]?.high ?? 0),
+                low: quote.low !== 0 ? quote.low : (prev[symbol]?.low ?? 0),
+                previous_close: quote.previous_close !== 0 ? quote.previous_close : (prev[symbol]?.previous_close ?? 0),
+              },
+            }));
+            setErrors(prev => { const n = { ...prev }; delete n[symbol]; return n; });
+          } catch {
+            // Silently skip — WebSocket is primary; REST is fallback
+          }
+        })
+      );
+    };
+
+    pollQuotes();
+    pollingIntervalRef.current = setInterval(pollQuotes, 15000);
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
     };
   }, [watchlistKey, stocksFetched]);
 
