@@ -48,11 +48,13 @@ async function analyzeReg30EventViaProxy(candidate: EventCandidate): Promise<Reg
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         candidate: {
-          company_name:   candidate.company_name,
-          symbol:         candidate.symbol,
-          source_link:    candidate.attachment_link || candidate.link,
-          event_date:     candidate.event_date,
-          published_date: candidate.event_date,
+          company_name:    candidate.company_name,
+          symbol:          candidate.symbol,
+          source_link:     candidate.attachment_link || candidate.link,
+          event_date:      candidate.event_date,
+          published_date:  (candidate as any).published_date || candidate.event_date,
+          attachment_text: (candidate as any).attachment_text || '',
+          raw_text:        candidate.raw_text || '',
         },
       }),
     });
@@ -569,10 +571,10 @@ export const runReg30Analysis = async (
         const scoring = proxied
           ? {
               impact_score:            aiResult.impact_score,
-              direction:               ((proxyAny._direction || 'NEUTRAL') as Sentiment),
+              direction:               ((proxyAny.direction || proxyAny._direction || 'NEUTRAL') as Sentiment),
               recommendation:          aiResult.recommendation,
-              factors:                 proxyAny._scoring_factors || [],
-              conversion_bonus:        0,
+              factors:                 proxyAny.scoring_factors || proxyAny._scoring_factors || [],
+              conversion_bonus:        proxyAny.conversion_bonus ?? 0,
               final_execution_months:  ext.execution_months || null,
               order_type:              ext.order_type || 'UNKNOWN',
             }
@@ -878,7 +880,8 @@ export const syncNseEvents = async (
     const candidates: EventCandidate[] = rows.map((r, i) => ({
       id: s(`${r.nse_ticker}-${r.published_date}-${i}`),
       source: 'XBRL' as Reg30Source,
-      event_date: r.published_date.split('T')[0],
+      event_date:     r.published_date.split('T')[0],
+      published_date: r.published_date,
       symbol: r.nse_ticker,
       company_name: r.company_name,
       category: 'NSE Announcement',
