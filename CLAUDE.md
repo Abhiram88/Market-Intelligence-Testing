@@ -62,14 +62,16 @@ Frontend (React, :8082)
 - `/api/gemini/*` — AI endpoints: `summarize_market_outlook`, `stock-deep-dive`, reg30 event analysis
 - Socket.IO — real-time watchlist subscriptions
 
-### Breeze Proxy (`breeze-proxy/breeze_proxy_app.py`, ~1450 lines)
-> **Reference copy only** — this file mirrors the live code on Google Cloud Run but is **not auto-deployed**. After editing, the server must be updated manually.
+### Breeze Proxy (`breeze-proxy/breeze_proxy_app.py`, ~1700 lines)
+> **Reference copy only** — live code is in `https://github.com/Abhiram88/MAIA-Breeze-Proxy.git` on branch `copilot/fix-build-failure-backend-server`. Changes must be pushed there and deployed to Cloud Run manually.
 
 Secure intermediary keeping ICICI Breeze API credentials server-side. Key responsibilities:
-- BreezeConnect WebSocket client → tick queue → Socket.IO room dispatch
+- BreezeConnect WebSocket client → tick queue → Socket.IO room dispatch (zero-latency pipeline for algo trading)
 - Symbol mapping (hardcoded overrides + Supabase `nse_master_list` fallback)
 - Reg30 Gemini analysis pipeline
 - Session token management via `/api/breeze/admin/api-session`
+
+**`DAILY_SESSION_TOKEN` is in-memory only** — resets on every Cloud Run restart/redeploy. User must re-enter via the key icon (BreezeTokenModal) in the app after each deploy.
 
 ### Frontend (`frontend/src/`)
 Tab-based SPA: **MonitorTab** (real-time watchlist, Nifty streaming, order book), **ResearchTab** (Gemini stock deep-dive), **Reg30Tab** (regulatory filing analysis).
